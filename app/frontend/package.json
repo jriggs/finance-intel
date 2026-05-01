@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "esbuild src/main.ts --bundle --outfile=dist/main.js --target=es2020 --format=iife",
-    "dev": "esbuild src/main.ts --bundle --outfile=dist/main.js --target=es2020 --format=iife --watch --serve=localhost:3000 --servedir=. --serve-fallback=index.html",
+    "dev": "esbuild src/main.ts --bundle --outfile=dist/main.js --target=es2020 --format=iife --watch=forever --serve=localhost:3000 --servedir=. --serve-fallback=index.html",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit"
   },

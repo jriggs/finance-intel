@@ -13,8 +13,9 @@ RESET="\033[0m"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND="$SCRIPT_DIR/backend"
-FRONTEND="$SCRIPT_DIR/frontend/index.html"
+FRONTEND="$SCRIPT_DIR/frontend"
 PORT=8000
+UI_PORT=3000
 
 # ── Check venv ───────────────────────────────────────────────────────────────
 if [ ! -d "$BACKEND/venv" ]; then
@@ -38,10 +39,15 @@ if [ -z "$MODEL_PATH" ] || [[ "$MODEL_PATH" == *"your-model"* ]] || [[ "$MODEL_P
   [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
 fi
 
-# ── Kill any existing server on same port ────────────────────────────────────
+# ── Kill any existing servers on same ports ───────────────────────────────────
 if lsof -ti:$PORT &>/dev/null; then
   echo -e "${YELLOW}Stopping existing process on port $PORT…${RESET}"
   lsof -ti:$PORT | xargs kill -9 2>/dev/null || true
+  sleep 1
+fi
+if lsof -ti:$UI_PORT &>/dev/null; then
+  echo -e "${YELLOW}Stopping existing process on port $UI_PORT…${RESET}"
+  lsof -ti:$UI_PORT | xargs kill -9 2>/dev/null || true
   sleep 1
 fi
 
@@ -50,6 +56,24 @@ echo ""
 echo -e "${BOLD}${CYAN}Starting Local LLM Chat…${RESET}"
 echo -e "  Backend:  ${BOLD}http://localhost:$PORT${RESET}"
 echo -e "  Docs:     ${BOLD}http://localhost:$PORT/docs${RESET}"
+echo -e "  Frontend: ${BOLD}http://localhost:$UI_PORT${RESET}"
+echo ""
+
+# ── Start frontend dev server ─────────────────────────────────────────────────
+cd "$FRONTEND"
+npm run dev > /tmp/finance-intel-ui.log 2>&1 &
+UI_PID=$!
+
+echo -n "Waiting for UI server"
+for i in $(seq 1 30); do
+  if curl -s "http://localhost:$UI_PORT" &>/dev/null; then
+    echo ""
+    echo -e "${GREEN}✓ UI server is up${RESET}"
+    break
+  fi
+  echo -n "."
+  sleep 1
+done
 echo ""
 
 cd "$BACKEND"
@@ -74,13 +98,13 @@ echo ""
 
 # ── Open frontend in browser ─────────────────────────────────────────────────
 echo -e "${BOLD}Opening frontend…${RESET}"
-open "$FRONTEND"
+open "http://localhost:$UI_PORT"
 
 echo ""
 echo -e "${GREEN}Chat app is running!${RESET}"
-echo -e "Press ${BOLD}Ctrl+C${RESET} to stop the server."
+echo -e "Press ${BOLD}Ctrl+C${RESET} to stop."
 echo ""
 
 # ── Keep running until Ctrl+C ────────────────────────────────────────────────
-trap "echo ''; echo -e '${YELLOW}Shutting down…${RESET}'; kill $SERVER_PID 2>/dev/null; exit 0" INT TERM
+trap "echo ''; echo -e '${YELLOW}Shutting down…${RESET}'; kill $SERVER_PID $UI_PID 2>/dev/null; exit 0" INT TERM
 wait $SERVER_PID
