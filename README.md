@@ -10,6 +10,18 @@ All data processing and LLM inference runs locally. Optional integrations availa
 
 ---
 
+## Screenshots
+
+**Watchlist Signals** — per-symbol scoring cards with BUY/WATCH/HOLD/AVOID rating, composite score, short/long-term/momentum/sentiment breakdown, and key fundamental highlights:
+
+![Watchlist Signals](docs/screenshots/watchlist-signals.png)
+
+**Stock Detail** — candlestick chart with SMA/BB/RSI/MACD overlays, multi-timeframe selector (1D–5Y), four-quadrant signal scores, and live watchlist sidebar:
+
+![Stock Detail](docs/screenshots/stock-detail.png)
+
+---
+
 ## Tech Stack
 
 | Component | Technology |
@@ -141,6 +153,26 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 #### AI Analysis
 - **AI Analyst** — LLM with auto-injected market context: live prices, news, FRED macro data, RAG-retrieved filings → streaming Q&A
+- **Extended Insights** — Full AI-generated reports per symbol: valuation summary, technical outlook, macro impact, upcoming catalysts, risks, and bottom line — streamed token-by-token
+- **AI Recommendations** — Scheduled LLM sweep of watchlist generates ranked buy/hold/avoid picks stored and refreshed every 6 hours
+- **Sentiment Analysis** — Per-symbol sentiment scores derived from crawled news and social feeds, cached and updated with each crawl cycle
+
+#### Screeners
+
+Built-in screeners run on a schedule and are accessible on-demand:
+
+| Screener | Focus |
+|----------|-------|
+| `undervalued` | Low P/E, P/B, EV/EBITDA with solid fundamentals |
+| `momentum` | Strong RSI + SMA alignment + price trend |
+| `growth` | Revenue + earnings acceleration |
+| `dividend` | Yield + payout stability |
+| `beaten_down` | Oversold with improving fundamentals |
+| `moonshots` | High-risk high-reward speculative setups |
+| Sector-specific | Tech, energy, healthcare, financials, etc. |
+
+#### Volume Analysis
+- **Rolling Volume Scoring** — Configurable background job scores stocks by volume relative to average, flags unusual accumulation/distribution, and maintains a ranked result list updated every minute
 
 ---
 
@@ -149,65 +181,70 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 app/
 ├── backend/
-│   ├── main.py             # FastAPI app, chat + RAG + model routes
-│   ├── finance_router.py   # All /api/finance/* endpoints
-│   ├── market.py           # yfinance: prices, OHLCV, technicals
-│   ├── signals.py          # Signal scoring (value + technical + analyst)
-│   ├── fundamentals.py     # SEC EDGAR, FRED, OpenFIGI, Macrotrends
-│   ├── ingestion.py        # RAG ingestion (filings → ChromaDB)
-│   ├── broker.py           # Alpaca trading
-│   ├── db.py               # SQLite persistence layer (finance.db)
-│   ├── crawler.py          # Playwright web crawlers (throttled, sequential)
-│   ├── scheduler.py        # APScheduler jobs
-│   ├── llm.py              # llama-cpp-python wrapper with Metal
-│   ├── rag.py              # ChromaDB + embeddings
-│   ├── scraper.py          # Async web scraper (trafilatura + BS4)
-│   ├── search.py           # Web search routing (DuckDuckGo, Google News RSS)
-│   ├── trainer.py          # MLX LoRA fine-tuning
-│   ├── prompts.py          # Prompt templates + model family detection
-│   ├── activity.py         # SSE event emitter for real-time UI updates
-│   ├── http_retry.py       # Exponential backoff for HTTP requests
-│   ├── refresh_symbols.py  # Ticker lookup + symbol cache refresh
-│   ├── requirements.txt    # Python dependencies
-│   ├── .env                # Your local config (gitignored)
-│   ├── .env.example        # Config template — copy to .env to get started
-│   ├── tests/              # Unit + integration tests
-│   └── venv/               # Virtual environment (gitignored)
+│   ├── main.py                 # FastAPI app entry point — chat, RAG, model routes, SSE
+│   ├── finance_router.py       # /api/finance/* aggregator — EDGAR, FRED, LLM, insights, scheduler
+│   ├── market_router.py        # Market data routes — stock, chart, news, quotes, peers
+│   ├── signals_router.py       # Signal scoring, screeners, recommendations, sentiment, volume
+│   ├── broker_router.py        # Watchlist, picks, Alpaca trading, crawl routes
+│   ├── market.py               # yfinance wrapper — prices, OHLCV, technicals, rate-limit backoff
+│   ├── signals.py              # Signal scoring engine (value + technicals + analyst → A–D grade)
+│   ├── fundamentals.py         # SEC EDGAR XBRL, FRED macro indicators, OpenFIGI
+│   ├── broker.py               # Alpaca integration — orders, positions, P&L
+│   ├── db.py                   # SQLite persistence (finance.db)
+│   ├── crawler.py              # Playwright crawlers — Reddit, MarketWatch, Finviz, etc.
+│   ├── scheduler.py            # APScheduler background jobs
+│   ├── scraper.py              # Async HTTP scraper (trafilatura + BeautifulSoup)
+│   ├── refresh_symbols.py      # Bulk ticker lookup + autocomplete cache
+│   ├── ai/
+│   │   ├── llm.py              # llama-cpp-python wrapper with Metal GPU
+│   │   ├── rag.py              # ChromaDB + sentence-transformer embeddings
+│   │   ├── ingestion.py        # Document → chunk → embed → ChromaDB pipeline
+│   │   ├── trainer.py          # MLX LoRA fine-tuning + GGUF export
+│   │   └── prompts.py          # Prompt templates by model family
+│   ├── core/
+│   │   ├── db.py               # DB connection + schema init
+│   │   ├── activity.py         # SSE event emitter for real-time UI updates
+│   │   └── http_retry.py       # Exponential backoff for external HTTP calls
+│   ├── requirements.txt
+│   ├── .env                    # Local config (gitignored)
+│   ├── .env.example            # Config template
+│   └── tests/
 ├── frontend/
 │   ├── src/
-│   │   ├── types.ts        # Shared interfaces
-│   │   ├── api.ts          # API client
-│   │   ├── utils.ts        # Formatters, helpers
-│   │   ├── state.ts        # Global mutable state
-│   │   ├── router.ts       # Hash-based routing
-│   │   ├── dashboard.ts    # Dashboard view
-│   │   ├── watchlist.ts    # Watchlist CRUD
-│   │   ├── stock.ts        # Stock detail view
-│   │   ├── chart.ts        # Candlestick chart view
-│   │   ├── signals.ts      # Signal + screener views
-│   │   ├── picks.ts        # Picks tracker
-│   │   ├── broker.ts       # Alpaca portfolio
-│   │   ├── feed.ts         # News & social feed
-│   │   ├── chat.ts         # AI chat
-│   │   ├── volume.ts       # Volume analysis view
-│   │   ├── activities.ts   # Activity log viewer
-│   │   ├── settings.ts     # Settings + admin panel
-│   │   └── main.ts         # Entry point
-│   ├── index.html          # Single-page app shell
-│   ├── eslint.config.js
+│   │   ├── types.ts            # Shared TypeScript interfaces
+│   │   ├── api.ts              # HTTP client (fetch wrapper)
+│   │   ├── utils.ts            # Formatters, number parsing, helpers
+│   │   ├── state.ts            # Global mutable state (watchlist, settings)
+│   │   ├── router.ts           # Hash-based routing
+│   │   ├── dashboard.ts        # Main dashboard view
+│   │   ├── watchlist.ts        # Watchlist CRUD UI
+│   │   ├── stock.ts            # Stock detail page
+│   │   ├── chart.ts            # TradingView Lightweight Charts (OHLCV + overlays)
+│   │   ├── signals.ts          # Signal grades + screener UI
+│   │   ├── picks.ts            # Picks tracker
+│   │   ├── broker.ts           # Portfolio + order placement
+│   │   ├── feed.ts             # News & social feed
+│   │   ├── chat.ts             # AI chat interface
+│   │   ├── volume.ts           # Volume analysis view
+│   │   ├── activities.ts       # Activity log viewer
+│   │   ├── settings.ts         # Admin panel + job config
+│   │   └── main.ts             # Entry point
+│   ├── index.html
 │   ├── tsconfig.json
 │   └── package.json
 ├── train/
-│   ├── train.py            # MLX LoRA training script
-│   ├── prepare_data.py     # Data preparation
-│   ├── export.py           # Export adapters → GGUF
-│   └── adapters/           # Trained LoRA adapters (gitignored)
-├── models/                 # Your GGUF files — add them here (gitignored)
-├── data/                   # Auto-created at runtime (gitignored)
-│   ├── finance.db          # Single SQLite DB — all app state
-│   └── chroma/             # ChromaDB vector index
-├── setup.sh                # One-time setup
-└── start.sh                # Run the app
+│   ├── train.py                # MLX LoRA training script
+│   ├── prepare_data.py         # Dataset preparation
+│   ├── export.py               # Export adapter → GGUF
+│   └── adapters/               # Trained LoRA adapters (gitignored)
+├── models/                     # GGUF model files (gitignored)
+├── data/                       # Auto-created at runtime (gitignored)
+│   ├── finance.db              # Single SQLite DB
+│   └── chroma/                 # ChromaDB vector index
+├── docs/
+│   └── screenshots/            # UI screenshots
+├── setup.sh
+└── start.sh
 ```
 
 ---
@@ -216,25 +253,27 @@ app/
 
 | Module | Responsibility |
 |---|---|
-| `main.py` | FastAPI app entry point. Chat, RAG, model hot-swap, vision, SSE streaming, lifespan setup |
-| `finance_router.py` | All `/api/finance/*` endpoints — mounts into main app, consumes shared LLM/RAG singletons |
-| `market.py` | yfinance wrapper: live quotes, OHLCV price history, technicals (RSI, MACD, Bollinger bands, SMA), rate-limit backoff |
-| `signals.py` | Signal scoring engine: value metrics (P/E, P/B, EV/EBITDA, FCF yield), technicals, analyst consensus → A–D grades |
-| `fundamentals.py` | External data: SEC EDGAR XBRL financials, FRED macro indicators, Macrotrends historical data, OpenFIGI ticker normalization |
-| `db.py` | SQLite persistence layer for all app state: watchlist, picks, crawl cache, symbols, sentiment, settings, RAG sources |
-| `broker.py` | Alpaca trading integration: place market/limit orders, fetch positions, P&L, account info (paper + live) |
-| `crawler.py` | Playwright-based news crawlers: Reddit finance subs, MarketWatch, Finviz, Polymarket, Seeking Alpha — throttled sequential execution |
-| `scheduler.py` | APScheduler background jobs: periodic crawling, signal recalculation, EDGAR filing ingestion |
-| `ingestion.py` | RAG ingestion pipeline: parse documents/filings → chunk → embed → store in ChromaDB |
-| `rag.py` | ChromaDB wrapper: document chunking, sentence-transformer embeddings, similarity retrieval |
-| `llm.py` | llama-cpp-python wrapper: model loading, Metal GPU config, streaming inference, vision model auto-swap |
-| `scraper.py` | Async HTTP scraper: trafilatura + BeautifulSoup content extraction, connection pool management |
-| `search.py` | Web search routing: DuckDuckGo, Google News RSS, URL extraction, scraped content injection into LLM context |
-| `trainer.py` | MLX LoRA fine-tuning: dataset upload, hyperparameter config, live loss streaming, GGUF export |
-| `prompts.py` | Prompt template selection by model family (Llama, Mistral, Qwen, Phi, etc.) + system prompt construction |
-| `activity.py` | Server-Sent Events emitter for broadcasting real-time progress updates to the UI |
-| `http_retry.py` | Exponential backoff decorator for external HTTP calls with configurable retry policies |
-| `refresh_symbols.py` | Bulk ticker lookup via OpenFIGI/yfinance; populates the symbols autocomplete table in SQLite |
+| `main.py` | FastAPI app entry point — chat, RAG, model hot-swap, vision, SSE streaming, lifespan setup |
+| `finance_router.py` | `/api/finance/*` aggregator — EDGAR, FRED, macro, insights, scheduler, admin config |
+| `market_router.py` | Market data routes — stock info, OHLCV charts, news, live quotes, peers |
+| `signals_router.py` | Signal scoring, screeners, recommendations, sentiment, volume analysis |
+| `broker_router.py` | Watchlist, picks tracker, Alpaca orders/positions/P&L, crawl triggers |
+| `market.py` | yfinance wrapper — live quotes, OHLCV history, RSI/MACD/Bollinger/SMA, rate-limit backoff |
+| `signals.py` | Signal scoring engine — P/E, P/B, EV/EBITDA, FCF yield, technicals, analyst consensus → A–D grade |
+| `fundamentals.py` | SEC EDGAR XBRL financials, FRED macro indicators, OpenFIGI ticker normalization |
+| `broker.py` | Alpaca integration — market/limit orders, positions, account, P&L (paper + live) |
+| `crawler.py` | Playwright crawlers — Reddit, MarketWatch, Finviz, Polymarket, Seeking Alpha (throttled, sequential) |
+| `scheduler.py` | APScheduler background jobs — crawling, scoring, ingestion, recommendations, volume analysis |
+| `scraper.py` | Async HTTP scraper — trafilatura + BeautifulSoup content extraction |
+| `refresh_symbols.py` | Bulk ticker lookup via OpenFIGI/yfinance; populates symbol autocomplete table |
+| `ai/llm.py` | llama-cpp-python wrapper — Metal GPU config, streaming inference, vision model auto-swap |
+| `ai/rag.py` | ChromaDB wrapper — document chunking, sentence-transformer embeddings, similarity retrieval |
+| `ai/ingestion.py` | RAG ingestion pipeline — parse → chunk → embed → ChromaDB |
+| `ai/trainer.py` | MLX LoRA fine-tuning — dataset upload, live loss streaming, GGUF export |
+| `ai/prompts.py` | Prompt template selection by model family (Llama, Mistral, Qwen, Phi, etc.) |
+| `core/activity.py` | SSE event emitter for real-time progress broadcasts to the UI |
+| `core/http_retry.py` | Exponential backoff decorator for external HTTP calls |
+| `core/db.py` | DB connection management + schema initialization |
 
 ---
 
@@ -397,24 +436,112 @@ Ensure:
 
 ---
 
-## API Endpoints (Selected)
+## API Endpoints
 
-### Chat
-- `POST /api/chat` — Stream chat with RAG toggle, model selection
-- `POST /api/sources/url` — Crawl URL into RAG
-- `GET /api/models` — List available GGUF models
-- `POST /api/train/start` — Start LoRA fine-tuning
-- `GET /api/train/status` — Training progress
+### Chat & RAG (`main.py`)
 
-### Finance
-- `GET /api/finance/quote/{symbol}` — Current price + technicals
-- `GET /api/finance/chart/{symbol}` — OHLCV + SMA (125 days)
-- `GET /api/finance/signals/{symbol}` — Signal scores + grades
-- `GET /api/finance/watchlist` — Saved watchlist
-- `POST /api/finance/watchlist` — Add/update stock
-- `GET /api/finance/picks` — Picks tracker
-- `POST /api/finance/order` — Place order (Alpaca)
-- `GET /api/finance/analyst` — AI analyst with context injection
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/chat` | Stream chat with RAG/web search; supports image upload + vision |
+| `GET` | `/api/sources` | List knowledge base sources |
+| `POST` | `/api/sources/url` | Crawl URL into RAG |
+| `POST` | `/api/sources/text` | Add raw text to RAG |
+| `DELETE` | `/api/sources/{source_id}` | Remove source |
+| `POST` | `/api/sources/retrain` | Re-crawl and re-index all URL sources |
+| `GET` | `/api/models` | List available GGUF models |
+| `GET` | `/api/model` | Current model info |
+| `POST` | `/api/models/switch` | Hot-swap model (no restart) |
+| `GET` | `/api/health` | App health + model load status |
+| `GET` | `/api/activity` | SSE stream of real-time activity events |
+| `POST` | `/api/seed` | Index built-in finance/news seed sources |
+| `GET` | `/api/seed` | List seed sources and index status |
+
+### Fine-tuning
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/train/status` | Training job status |
+| `GET` | `/api/train/log` | Training log entries |
+| `GET` | `/api/train/datasets` | List uploaded datasets |
+| `GET` | `/api/train/adapters` | List trained LoRA adapters |
+| `POST` | `/api/train/datasets/upload` | Upload JSONL/CSV/TXT dataset |
+| `POST` | `/api/train/start` | Start LoRA fine-tuning |
+| `POST` | `/api/train/stop` | Stop active training |
+| `GET` | `/api/train/stream` | SSE stream of live training output |
+
+### Market Data (`market_router.py`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/finance/stock/{symbol}` | Price, P/E, P/B, dividend, beta, sector, description |
+| `GET` | `/api/finance/chart/{symbol}` | OHLCV candles + SMA(20/50/200) + RSI for period |
+| `GET` | `/api/finance/news/{symbol}` | Recent news articles (default 15) |
+| `GET` | `/api/finance/quotes` | Live quotes for all watchlist symbols |
+| `GET` | `/api/finance/peers/{symbol}` | Sector peer quotes |
+| `GET` | `/api/finance/yfinance-status` | yfinance session health + blocklist |
+| `DELETE` | `/api/finance/market/not-found-blocklist` | Clear 404 symbol cache |
+
+### Signals & Screeners (`signals_router.py`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/finance/signal/{symbol}` | Score single stock → A–D grade (fundamentals + technicals + sentiment) |
+| `GET` | `/api/finance/signals/watchlist` | Score all watchlist symbols (cached) |
+| `GET` | `/api/finance/screeners` | List available screeners |
+| `GET` | `/api/finance/screeners-cached` | Get all cached screener results |
+| `GET` | `/api/finance/screen/{name}` | Get screener results (cached, fallback to live) |
+| `POST` | `/api/finance/screen/{name}/run` | Force-run screener in background |
+| `GET` | `/api/finance/recommendations` | AI recommendations for watchlist |
+| `POST` | `/api/finance/recommendations/run` | Generate recommendations in background |
+| `GET` | `/api/finance/sentiment/{symbol}` | Cached sentiment for symbol |
+| `GET` | `/api/finance/sentiment` | All cached sentiment |
+| `GET` | `/api/finance/volume-analysis/results` | Cached volume analysis scores |
+| `POST` | `/api/finance/volume-analysis/run` | Force-run volume analysis |
+| `POST` | `/api/finance/volume-analysis/rescore/{symbol}` | Rescore single symbol |
+
+### Watchlist, Picks & Broker (`broker_router.py`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/finance/watchlist` | Get all watched symbols |
+| `POST` | `/api/finance/watchlist` | Add symbol |
+| `DELETE` | `/api/finance/watchlist/{symbol}` | Remove symbol |
+| `GET` | `/api/finance/picks` | All picks with live P&L |
+| `GET` | `/api/finance/picks/stats` | Win rate + aggregate stats |
+| `POST` | `/api/finance/picks` | Log new pick (entry, direction, target, stop) |
+| `PUT` | `/api/finance/picks/{pick_id}/close` | Close pick with exit price + outcome |
+| `GET` | `/api/finance/broker/account` | Account summary (cash, buying power, net worth) |
+| `GET` | `/api/finance/broker/positions` | Current open positions |
+| `GET` | `/api/finance/broker/orders` | Order history |
+| `GET` | `/api/finance/broker/clock` | Market hours + SPY snapshot |
+| `POST` | `/api/finance/broker/order` | Place market or limit order |
+| `DELETE` | `/api/finance/broker/order/{order_id}` | Cancel order |
+| `GET` | `/api/finance/crawl/{source}` | Crawled news/sentiment for source |
+| `GET` | `/api/finance/crawl` | All crawl results |
+| `POST` | `/api/finance/crawl/run` | Trigger full crawl in background |
+
+### Research & AI (`finance_router.py`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/finance/edgar/filings/{symbol}` | 10-K, 10-Q, 8-K filings |
+| `GET` | `/api/finance/edgar/financials/{symbol}` | 5-year XBRL financial history |
+| `GET` | `/api/finance/edgar/cik/{symbol}` | SEC CIK number |
+| `GET` | `/api/finance/macro/snapshot` | FRED macro snapshot (GDP, CPI, Fed rate, etc.) |
+| `GET` | `/api/finance/macro/series/{series_id}` | Historical FRED series |
+| `GET` | `/api/finance/macro/series` | List available FRED series |
+| `POST` | `/api/finance/ingest/{symbol}` | Ingest SEC filings into RAG |
+| `POST` | `/api/finance/ingest/run/all` | Ingest entire watchlist |
+| `POST` | `/api/finance/llm/stream` | Stream finance-aware Q&A with injected market context |
+| `GET` | `/api/finance/extended-insights/{symbol}` | Cached AI insight (valuation, technicals, macro, catalysts, risks) |
+| `POST` | `/api/finance/extended-insights/{symbol}/run` | Generate insight in background |
+| `GET` | `/api/finance/extended-insights/{symbol}/stream` | Stream insight tokens |
+| `GET` | `/api/finance/symbols` | Symbol autocomplete (~10k tickers) |
+| `GET` | `/api/finance/health` | Finance subsystem health |
+| `GET` | `/api/finance/scheduler/jobs` | All scheduled job status |
+| `GET` | `/api/finance/jobs/stream` | SSE stream of job status |
+| `POST` | `/api/finance/jobs/{job_id}/run` | Trigger job immediately |
+| `POST` | `/api/finance/jobs/{job_id}/stop` | Stop job |
 
 ---
 
