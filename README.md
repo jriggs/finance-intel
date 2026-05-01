@@ -14,11 +14,13 @@ All data processing and LLM inference runs locally. Optional integrations availa
 
 **Watchlist Signals** — per-symbol scoring cards with BUY/WATCH/HOLD/AVOID rating, composite score, short/long-term/momentum/sentiment breakdown, and key fundamental highlights:
 
-![Watchlist Signals](docs/screenshots/watchlist-signals.png)
+![Watchlist Signals](docs/screenshots/watchlist-signals.jpg)
 
-**Stock Detail** — candlestick chart with SMA/BB/RSI/MACD overlays, multi-timeframe selector (1D–5Y), four-quadrant signal scores, and live watchlist sidebar:
+**Stock Detail** — candlestick chart with SMA/BB/RSI/MACD overlays, multi-timeframe selector (1D–5Y), four-quadrant signal scores (ST/LT/MO/SE), and live watchlist sidebar:
 
-![Stock Detail](docs/screenshots/stock-detail.png)
+![Stock Detail](docs/screenshots/stock-detail.jpg)
+
+![Stock Detail Chart](docs/screenshots/stock-detail-chart.png)
 
 ---
 
