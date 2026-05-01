@@ -1,0 +1,53 @@
+# Core server
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+httpx>=0.27.0
+
+# Local LLM inference (GGUF models)
+# For CPU only:          pip install llama-cpp-python
+# For NVIDIA GPU:        CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python
+# For Apple Metal (M1+): CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python
+llama-cpp-python>=0.2.79
+
+# Embeddings
+sentence-transformers>=3.0.0
+einops>=0.7.0          # required by nomic-embed-text-v1.5 (rotary attention)
+
+# Vector store
+chromadb>=0.5.0
+
+# Web search + finance (no API key required)
+ddgs>=9.0.0
+yfinance>=0.2.50
+requests-cache>=1.0.0
+pandas>=2.0.0
+pandas-ta>=0.3.14b0
+numpy>=1.24.0
+
+# Broker
+alpaca-py>=0.29.0
+
+# Scheduling
+APScheduler>=3.10.4
+
+# Browser automation
+playwright>=1.44.0
+
+# Sentiment
+textblob>=0.18.0
+
+# Macro data
+fredapi>=0.5.0
+
+# Web scraping
+trafilatura>=1.9.0
+beautifulsoup4>=4.12.0
+lxml>=5.2.0
+
+# Fine-tuning (Apple Silicon — installs separately via setup.sh)
+# mlx-lm>=0.15.0
+
+# Testing
+pytest>=8.0.0

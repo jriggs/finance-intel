@@ -1,0 +1,68 @@
+import eslint from "@eslint/js";
+import tseslint from "typescript-eslint";
+
+export default [
+  eslint.configs.recommended,
+  ...tseslint.configs.recommendedTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        project: true,
+      },
+      globals: {
+        alert: "readonly",
+        clearInterval: "readonly",
+        console: "readonly",
+        document: "readonly",
+        EventSource: "readonly",
+        fetch: "readonly",
+        history: "readonly",
+        localStorage: "readonly",
+        LightweightCharts: "readonly",
+        PopStateEvent: "readonly",
+        prompt: "readonly",
+        ResizeObserver: "readonly",
+        setInterval: "readonly",
+        setTimeout: "readonly",
+        TextDecoder: "readonly",
+        URLSearchParams: "readonly",
+        window: "readonly",
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/explicit-function-return-type": "off",
+      "@typescript-eslint/no-non-null-assertion": "warn",
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+      "@typescript-eslint/prefer-nullish-coalescing": "warn",
+      "@typescript-eslint/prefer-optional-chain": "warn",
+      "@typescript-eslint/consistent-type-imports": "warn",
+      "@typescript-eslint/no-require-imports": "error",
+      "@typescript-eslint/explicit-member-accessibility": ["warn", { accessibility: "explicit" }],
+      "eqeqeq": ["warn", "always"],
+      "no-console": ["warn", { allow: ["warn", "error"] }],
+      "no-debugger": "warn",
+      "prefer-const": "warn",
+      "no-var": "error",
+      "no-implicit-coercion": "warn",
+      "radix": ["warn", "always"],
+      "no-loss-of-precision": "error",
+      "prefer-template": "warn",
+      "no-unneeded-ternary": "warn",
+      "dot-notation": "warn",
+      "no-shadow": ["warn", { builtinGlobals: false }],
+      "no-eval": "error",
+      "no-implied-eval": "error",
+      "no-script-url": "error",
+    },
+  },
+  {
+    files: ["dist/**", "eslint.config.js"],
+    ...tseslint.configs.disableTypeChecked,
+    rules: {
+      "no-var": "off",
+      "no-empty": "off",
+    },
+  },
+];

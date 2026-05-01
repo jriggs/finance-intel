@@ -1,0 +1,53 @@
+[project]
+name = "finance-intelligence-platform"
+version = "1.0.0"
+description = "AI-powered finance dashboard with local LLM inference"
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["app/backend", "app/train"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "TCH",   # flake8-type-checking
+    "RUF",   # ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "E402",   # module-level import not at top (common in scripts with sys.path manipulation)
+    "E701",   # multiple statements on one line (colon) — intentional in scoring tables
+    "E702",   # multiple statements on one line (semicolon) — intentional in scoring tables
+    "B008",   # function call in default argument (FastAPI Depends pattern)
+    "B905",   # zip() without strict= — lists are always the same length here
+    "SIM108", # ternary operator — sometimes less readable
+    "UP007",  # X | Y union syntax — keep Optional for clarity
+    "N806",   # variable in function should be lowercase (common for DataFrame, etc.)
+    "N803",   # argument name should be lowercase
+    "N802",   # function name should be lowercase
+    "RUF012", # mutable class attributes — many FastAPI patterns use this
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "main", "finance_router", "market", "signals", "fundamentals",
+    "ingestion", "broker", "db", "crawler", "scheduler",
+    "llm", "rag", "scraper", "search", "trainer", "prompts", "activity",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["app/backend/tests"]
+pythonpath = ["app/backend"]
