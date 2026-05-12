@@ -17,7 +17,27 @@ from typing import Any
 
 import fundamentals as _fd
 import db as _portfolio
-from market import _yf_is_blocked, _yf_trip_breaker, get_price_history, get_stock_info
+from market import _yf_is_blocked, _yf_trip_breaker, get_price_history, get_stock_info, get_fast_market_cap
+
+# ── Moonshot: large-cap blocklist ─────────────────────────────────────────────
+# Companies with market cap >> $10B that can never realistically 10x.
+# API-based cap checks are flaky (rate limits → exception → cap=0 → passes).
+# This list is the hard gate; get_fast_market_cap() is a secondary check.
+_LARGE_CAP_BLOCKLIST: frozenset[str] = frozenset({
+    # Mega cap (>$500B)
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA", "BRK.A", "BRK.B",
+    "LLY", "AVGO", "JPM", "V", "UNH", "XOM", "MA", "COST", "HD", "WMT",
+    "PG", "JNJ", "ORCL", "BAC", "ABBV", "KO", "CRM", "CVX", "MRK", "NFLX",
+    "AMD", "PEP", "TMO", "ACN", "ADBE", "DIS", "ABT", "WFC", "MCD", "CSCO",
+    "PM", "GE", "TXN", "IBM", "QCOM", "INTU", "AMGN", "DHR", "CAT", "ISRG",
+    # Large cap ($50B–$500B) — still can't 10x
+    "NOW", "UBER", "GS", "BKNG", "BLK", "SPGI", "AXP", "SYK", "VRTX", "GILD",
+    "PFE", "T", "VZ", "RTX", "HON", "MMM", "UPS", "BA", "LMT", "NEE",
+    "SCHW", "CME", "USB", "C", "MS", "REGN", "ZTS", "BSX", "EOG", "SLB",
+    "CI", "COP", "SO", "DUK", "PLD", "AMT", "WELL", "CCI", "PSA", "O",
+    "PYPL", "SNAP", "PINS", "TWTR", "LYFT", "DASH", "ABNB", "COIN", "HOOD",
+    "INTC", "MU", "AMAT", "KLAC", "LRCX", "MCHP", "SNPS", "CDNS",
+})
 
 # ── Scoring constants ─────────────────────────────────────────────────────────
 
@@ -635,6 +655,7 @@ def score_stock(symbol: str, macro_snap: dict | None = None) -> dict:
             "reasons": se_reasons,
         },
         "sector":           info.get("sector", ""),
+        "industry":         info.get("industry", ""),
         "pe_ratio":         info.get("pe_ratio"),
         "pb_ratio":         info.get("pb_ratio"),
         "52w_low":          info.get("52w_low"),
@@ -1258,13 +1279,33 @@ def _screen_moonshots(sym: str) -> dict | None:
     (price recovering but well below 52w high), MACD just turning bullish,
     RSI building from neutral, and volume picking up.
     """
+    # ── Blocklist gate (instant, no API) ─────────────────────────────────────
+    if sym in _LARGE_CAP_BLOCKLIST:
+        return None
+
     info = get_stock_info(sym)
     price = info.get("price") or 0
     if not price:
         return None
 
+    # ── Market cap gate: secondary check via API ──────────────────────────────
+    # > $10B (large cap): physically impossible to 1000%; exclude entirely
+    # $2B–$10B (mid cap): very hard; allow but penalise
+    # < $2B (small/micro): prime moonshot territory; bonus
+    mcap = get_fast_market_cap(sym)  # bypasses info cache
+    if mcap > 10_000_000_000:  # > $10B — hard no
+        return None
+
     score = 0
     reasons: list[str] = []
+
+    if mcap > 0:
+        if mcap < 300_000_000:  # micro cap < $300M
+            score += 15; reasons.append(f"Micro-cap ${mcap/1e6:.0f}M — high upside potential")
+        elif mcap < 2_000_000_000:  # small cap < $2B
+            score += 10; reasons.append(f"Small-cap ${mcap/1e6:.0f}M — moonshot range")
+        elif mcap < 10_000_000_000:  # mid cap $2B–$10B
+            score -= 10; reasons.append(f"Mid-cap ${mcap/1e9:.1f}B — harder to 10x")
 
     # ── Fundamentals first: must have real growth (the catalyst) ─────────────
     rev_g  = info.get("revenue_growth") or 0
@@ -1380,6 +1421,7 @@ def _screen_moonshots(sym: str) -> dict | None:
         "pe_ratio": info.get("pe_ratio"), "analyst_target": info.get("analyst_target"),
         "sector": info.get("sector", ""),
         "revenue_growth": rev_g, "earnings_growth": earn_g,
+        "market_cap": mcap,
     }
 
 
@@ -1525,6 +1567,8 @@ def _screener_from_volume_cache(screen_name: str, cached: dict) -> dict | None:
                 "reasons": (v_rsns + a_rsns + t_rsns)[:4]}
 
     if screen_name == "moonshots":
+        if sym in _LARGE_CAP_BLOCKLIST:
+            return None
         if rev_g < 0.05:
             return None
         score = 0; reasons = []

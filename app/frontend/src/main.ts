@@ -29,6 +29,7 @@ import {
 import { loadVolumeResults, sortVolumeBy, rescoreVolume } from "./views/volume.js";
 import { loadDashboard } from "./views/dashboard.js";
 import { loadPicks, submitPick, closePick } from "./views/picks.js";
+import { loadTrades, confirmTrades, closeDailyPosition } from "./views/trades.js";
 import {
   loadBroker,
   loadOrders,
@@ -206,6 +207,7 @@ function router(): void {
     void loadVolumeResults();
   }
   if (view === "picks") void loadPicks();
+  if (view === "trades") void loadTrades();
   if (view === "broker") void loadBroker();
   if (view === "feed") void loadFeed();
   if (view === "settings") {
@@ -256,6 +258,8 @@ function wireEvents(): void {
   $("chat-send-btn").addEventListener("click", () => void sendChat());
   $("ai-insight-btn").addEventListener("click", () => void runExtendedInsight());
   $("submit-pick-btn").addEventListener("click", () => void submitPick());
+  $("trades-refresh-btn").addEventListener("click", () => void loadTrades(true));
+  $("trades-confirm-btn").addEventListener("click", () => void confirmTrades());
   $("signals-refresh-btn").addEventListener("click", () => void loadSignals(true));
   $("rec-run-btn").addEventListener("click", () => void runRecommendationsNow());
   $("screener-run-btn").addEventListener("click", () => void runCurrentScreener());
@@ -305,6 +309,7 @@ function exposeGlobals(): void {
     rescoreVolume,
     switchFeed,
     stopJobById,
+    closeDailyPosition,
   });
 }
 

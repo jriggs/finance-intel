@@ -311,6 +311,55 @@ def is_not_found_blocked(symbol: str) -> bool:
     return True
 
 
+def _fast_market_cap(ticker: Any, info: dict | None = None) -> float | None:
+    """Fallback market cap — tries fast_info first, then shares × price."""
+    try:
+        mc = ticker.fast_info.market_cap
+        if mc:
+            return float(mc)
+    except Exception:
+        pass
+    # Last resort: sharesOutstanding × price
+    try:
+        if info:
+            shares = _to_num(info.get("sharesOutstanding") or info.get("impliedSharesOutstanding"))
+            price  = _to_num(
+                info.get("currentPrice")
+                or info.get("regularMarketPrice")
+                or info.get("navPrice")
+            )
+            if shares and price:
+                return shares * price
+    except Exception:
+        pass
+    return None
+
+
+def get_fast_market_cap(symbol: str) -> float:
+    """
+    Return market cap directly from yfinance fast_info — bypasses the info
+    cache so stale None entries don't fool callers. Falls back to
+    sharesOutstanding × price, then 0 if both fail.
+    """
+    try:
+        ticker = _yf_ticker(symbol.upper())
+        mc = ticker.fast_info.market_cap
+        if mc:
+            return float(mc)
+        # sharesOutstanding × price fallback
+        info = ticker.info or {}
+        shares = _to_num(info.get("sharesOutstanding") or info.get("impliedSharesOutstanding"))
+        price  = _to_num(
+            info.get("currentPrice")
+            or info.get("regularMarketPrice")
+        )
+        if shares and price:
+            return shares * price
+    except Exception:
+        pass
+    return 0.0
+
+
 def get_stock_info(symbol: str) -> dict[str, Any]:
     """Return fundamentals + quote data for a symbol. Cached per config TTL."""
     _yf_check()
@@ -374,7 +423,7 @@ def get_stock_info(symbol: str) -> dict[str, Any]:
         "change_pct":        change_pct,
         "volume":            _to_num(info.get("regularMarketVolume")),
         "avg_volume":        _to_num(info.get("averageVolume")),
-        "market_cap":        _to_num(info.get("marketCap")),
+        "market_cap":        _to_num(info.get("marketCap")) or _fast_market_cap(ticker, info),
         "pe_ratio":          _to_num(info.get("trailingPE")),
         "forward_pe":        _to_num(info.get("forwardPE")),
         "pb_ratio":          _to_num(info.get("priceToBook")),

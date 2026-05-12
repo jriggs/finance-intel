@@ -156,6 +156,8 @@ def _init_schema() -> None:
             long_term_score  REAL,
             recommendation   TEXT,
             grade            TEXT,
+            sector           TEXT,
+            industry         TEXT,
             scores_json      TEXT,
             last_updated_at  TEXT NOT NULL
         );
@@ -210,6 +212,43 @@ def _init_schema() -> None:
             ON volume_analysis_tasks(needs_rescore, priority, last_scored_at);
         CREATE INDEX IF NOT EXISTS idx_vat_symbol
             ON volume_analysis_tasks(symbol);
+
+        -- Daily automated trading tables
+        CREATE TABLE IF NOT EXISTS daily_trade_sessions (
+            id          TEXT PRIMARY KEY,
+            trade_date  TEXT NOT NULL UNIQUE,
+            status      TEXT DEFAULT 'recommended',
+            created_at  TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS daily_trade_positions (
+            id              TEXT PRIMARY KEY,
+            session_id      TEXT NOT NULL,
+            trade_date      TEXT NOT NULL,
+            symbol          TEXT NOT NULL,
+            signal_score    REAL,
+            screener_score  REAL,
+            volume_score    REAL,
+            aggregate_score REAL NOT NULL,
+            allocation_usd  REAL NOT NULL,
+            rank            INTEGER,
+            status          TEXT DEFAULT 'recommended',
+            sell_reason     TEXT,
+            sell_date       TEXT,
+            entry_price     REAL,
+            current_price   REAL,
+            exit_price      REAL,
+            pnl_pct         REAL,
+            pnl_usd         REAL,
+            sentiment_score REAL,
+            source          TEXT DEFAULT 'overall',
+            UNIQUE(trade_date, symbol)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_dtp_status
+            ON daily_trade_positions(status);
+        CREATE INDEX IF NOT EXISTS idx_dtp_trade_date
+            ON daily_trade_positions(trade_date);
     """)
     conn.commit()
 
@@ -232,6 +271,33 @@ def _migrate() -> None:
         conn.commit()
     if "avg_volume" not in sym_cols:
         conn.execute("ALTER TABLE symbols ADD COLUMN avg_volume REAL")
+        conn.commit()
+
+    var_cols = {row[1] for row in conn.execute("PRAGMA table_info(volume_analysis_results)")}
+    if "sector" not in var_cols:
+        conn.execute("ALTER TABLE volume_analysis_results ADD COLUMN sector TEXT")
+        # Back-fill from existing scores_json so current rows aren't left blank
+        conn.execute("""
+            UPDATE volume_analysis_results
+            SET sector = json_extract(scores_json, '$.sector')
+            WHERE sector IS NULL AND scores_json IS NOT NULL
+        """)
+        conn.commit()
+    if "industry" not in var_cols:
+        conn.execute("ALTER TABLE volume_analysis_results ADD COLUMN industry TEXT")
+        conn.execute("""
+            UPDATE volume_analysis_results
+            SET industry = json_extract(scores_json, '$.industry')
+            WHERE industry IS NULL AND scores_json IS NOT NULL
+        """)
+        conn.commit()
+
+    dtp_cols = {row[1] for row in conn.execute("PRAGMA table_info(daily_trade_positions)")}
+    if "sentiment_score" not in dtp_cols:
+        conn.execute("ALTER TABLE daily_trade_positions ADD COLUMN sentiment_score REAL")
+        conn.commit()
+    if "source" not in dtp_cols:
+        conn.execute("ALTER TABLE daily_trade_positions ADD COLUMN source TEXT DEFAULT 'overall'")
         conn.commit()
 
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -796,8 +862,8 @@ def save_volume_result(symbol: str, scores: dict) -> None:
             INSERT OR REPLACE INTO volume_analysis_results
             (symbol, overall_score, macro_score, sentiment_score,
              short_term_score, long_term_score, recommendation, grade,
-             scores_json, last_updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             sector, industry, scores_json, last_updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             symbol.upper(),
             scores.get("score", 0),
@@ -807,6 +873,8 @@ def save_volume_result(symbol: str, scores: dict) -> None:
             scores.get("long_term", {}).get("score", 0),
             scores.get("recommendation", ""),
             scores.get("grade", ""),
+            scores.get("sector") or None,
+            scores.get("industry") or None,
             json.dumps(scores),
             now,
         ))
@@ -841,6 +909,14 @@ def get_all_volume_scores() -> dict[str, dict]:
     return result
 
 
+def get_all_volume_sentiments() -> dict[str, float]:
+    """Return {symbol: sentiment_score} for every scored symbol — no limit."""
+    rows = _get_conn().execute(
+        "SELECT symbol, sentiment_score FROM volume_analysis_results WHERE sentiment_score IS NOT NULL"
+    ).fetchall()
+    return {r["symbol"].upper(): float(r["sentiment_score"]) for r in rows}
+
+
 def get_volume_results(limit: int = 500) -> tuple[list[dict], int]:
     """Return (top-N results by score, total count)."""
     total = _get_conn().execute("SELECT COUNT(*) FROM volume_analysis_results").fetchone()[0]
@@ -852,6 +928,32 @@ def get_volume_results(limit: int = 500) -> tuple[list[dict], int]:
         LIMIT ?
     """, (limit,)).fetchall()
     return [dict(r) for r in rows], total
+
+
+def get_all_volume_results() -> list[dict]:
+    """Return every scored symbol ordered by overall_score descending."""
+    rows = _get_conn().execute("""
+        SELECT symbol, overall_score, macro_score, sentiment_score,
+               short_term_score, long_term_score, recommendation, grade,
+               sector, industry, last_updated_at
+        FROM volume_analysis_results
+        ORDER BY overall_score DESC
+    """).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_data_ages() -> dict[str, str | None]:
+    """Return the most-recent update timestamps for volume and screener data."""
+    vol_row = _get_conn().execute(
+        "SELECT MAX(last_updated_at) AS t FROM volume_analysis_results"
+    ).fetchone()
+    sc_row = _get_conn().execute(
+        "SELECT MAX(generated_at) AS t FROM screener_results"
+    ).fetchone()
+    return {
+        "volume_last_updated":   vol_row["t"] if vol_row else None,
+        "screener_last_updated": sc_row["t"] if sc_row else None,
+    }
 
 
 def get_volume_task_counts() -> dict:
@@ -1018,3 +1120,175 @@ def save_all_rag_sources(sources: dict[str, dict]) -> None:
             [(sid, json.dumps(data), now) for sid, data in sources.items()],
         )
         _get_conn().commit()
+
+
+# ── Daily Automated Trades ────────────────────────────────────────────────────
+
+def get_daily_session(trade_date: str) -> dict | None:
+    row = _get_conn().execute(
+        "SELECT * FROM daily_trade_sessions WHERE trade_date=?", (trade_date,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_daily_positions_for_date(trade_date: str) -> list[dict]:
+    rows = _get_conn().execute(
+        "SELECT * FROM daily_trade_positions WHERE trade_date=? ORDER BY rank",
+        (trade_date,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_daily_session(trade_date: str, positions: list[dict]) -> dict:
+    """
+    Upsert today's recommended picks. Always replaces recommended positions so a
+    force-refresh can't accumulate stale rows. Purchased/sold positions are untouched.
+    """
+    now = datetime.now(UTC).isoformat()
+    with _write_lock:
+        # Ensure session row exists
+        existing = _get_conn().execute(
+            "SELECT id FROM daily_trade_sessions WHERE trade_date=?", (trade_date,)
+        ).fetchone()
+        if existing:
+            session_id = existing["id"]
+        else:
+            session_id = str(uuid.uuid4())[:12]
+            _get_conn().execute(
+                "INSERT INTO daily_trade_sessions(id, trade_date, status, created_at) VALUES(?,?,?,?)",
+                (session_id, trade_date, "recommended", now),
+            )
+        # Delete only recommended positions — keep purchased/sold rows intact
+        _get_conn().execute(
+            "DELETE FROM daily_trade_positions WHERE trade_date=? AND status='recommended'",
+            (trade_date,),
+        )
+        for i, pos in enumerate(positions):
+            pos_id = str(uuid.uuid4())[:12]
+            _get_conn().execute("""
+                INSERT INTO daily_trade_positions
+                (id, session_id, trade_date, symbol, signal_score, screener_score,
+                 volume_score, aggregate_score, allocation_usd, rank, status,
+                 sentiment_score, source)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                pos_id, session_id, trade_date,
+                pos["symbol"], pos.get("signal_score"), pos.get("screener_score"),
+                pos.get("volume_score"), pos["aggregate_score"], pos["allocation_usd"],
+                i + 1, "recommended",
+                pos.get("sentiment_score"), pos.get("source", "overall"),
+            ))
+        _get_conn().commit()
+    row = _get_conn().execute(
+        "SELECT * FROM daily_trade_sessions WHERE trade_date=?", (trade_date,)
+    ).fetchone()
+    return dict(row)
+
+
+def confirm_daily_session(trade_date: str, price_map: dict[str, float]) -> bool:
+    """Mark session as confirmed and record entry prices + purchased status."""
+    with _write_lock:
+        _get_conn().execute(
+            "UPDATE daily_trade_sessions SET status='confirmed' WHERE trade_date=?",
+            (trade_date,),
+        )
+        for sym, price in price_map.items():
+            _get_conn().execute("""
+                UPDATE daily_trade_positions
+                SET status='purchased', entry_price=?, current_price=?, pnl_pct=0, pnl_usd=0
+                WHERE trade_date=? AND symbol=? AND status='recommended'
+            """, (price, price, trade_date, sym.upper()))
+        _get_conn().commit()
+    return True
+
+
+def get_open_daily_positions(cutoff_date: str | None = None) -> list[dict]:
+    """Return purchased positions. If cutoff_date given, only those on or before that date."""
+    if cutoff_date:
+        rows = _get_conn().execute(
+            "SELECT * FROM daily_trade_positions WHERE status='purchased' AND trade_date<=? ORDER BY trade_date DESC",
+            (cutoff_date,),
+        ).fetchall()
+    else:
+        rows = _get_conn().execute(
+            "SELECT * FROM daily_trade_positions WHERE status='purchased' ORDER BY trade_date DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_daily_position_prices(price_map: dict[str, float]) -> None:
+    """Refresh current_price and recompute pnl for all purchased positions."""
+    with _write_lock:
+        for sym, price in price_map.items():
+            rows = _get_conn().execute(
+                "SELECT id, entry_price, allocation_usd FROM daily_trade_positions WHERE symbol=? AND status='purchased'",
+                (sym.upper(),),
+            ).fetchall()
+            for row in rows:
+                if row["entry_price"]:
+                    pnl_pct = (price - row["entry_price"]) / row["entry_price"] * 100
+                    pnl_usd = pnl_pct / 100 * (row["allocation_usd"] or 0)
+                    _get_conn().execute(
+                        "UPDATE daily_trade_positions SET current_price=?, pnl_pct=?, pnl_usd=? WHERE id=?",
+                        (round(price, 4), round(pnl_pct, 2), round(pnl_usd, 4), row["id"]),
+                    )
+        _get_conn().commit()
+
+
+def flag_daily_position_sell(position_id: str, reason: str) -> None:
+    with _write_lock:
+        _get_conn().execute(
+            "UPDATE daily_trade_positions SET status='sell_flagged', sell_reason=? WHERE id=?",
+            (reason, position_id),
+        )
+        _get_conn().commit()
+
+
+def close_daily_position(position_id: str, exit_price: float | None = None) -> None:
+    now = datetime.now(UTC).date().isoformat()
+    with _write_lock:
+        row = _get_conn().execute(
+            "SELECT entry_price, allocation_usd FROM daily_trade_positions WHERE id=?",
+            (position_id,),
+        ).fetchone()
+        pnl_pct = pnl_usd = None
+        if row and row["entry_price"] and exit_price:
+            pnl_pct = (exit_price - row["entry_price"]) / row["entry_price"] * 100
+            pnl_usd = pnl_pct / 100 * (row["allocation_usd"] or 0)
+        _get_conn().execute("""
+            UPDATE daily_trade_positions
+            SET status='sold', sell_date=?, exit_price=?, pnl_pct=?, pnl_usd=?
+            WHERE id=?
+        """, (
+            now, exit_price,
+            round(pnl_pct, 2) if pnl_pct is not None else None,
+            round(pnl_usd, 4) if pnl_usd is not None else None,
+            position_id,
+        ))
+        _get_conn().commit()
+
+
+def get_daily_history(limit: int = 60) -> list[dict]:
+    """Return sessions newest-first with their positions."""
+    sessions = _get_conn().execute(
+        "SELECT * FROM daily_trade_sessions ORDER BY trade_date DESC LIMIT ?", (limit,)
+    ).fetchall()
+    result = []
+    for s in sessions:
+        positions = get_daily_positions_for_date(s["trade_date"])
+        result.append({**dict(s), "positions": positions})
+    return result
+
+
+def get_daily_portfolio_stats() -> dict:
+    rows = _get_conn().execute("""
+        SELECT
+            COUNT(*) FILTER (WHERE status='purchased')    AS open_count,
+            COUNT(*) FILTER (WHERE status='sold')         AS closed_count,
+            COUNT(*) FILTER (WHERE status='sell_flagged') AS flagged_count,
+            SUM(allocation_usd) FILTER (WHERE status='purchased') AS total_invested,
+            SUM(pnl_usd) FILTER (WHERE status='purchased')        AS open_pnl_usd,
+            AVG(pnl_pct) FILTER (WHERE status='sold')             AS avg_closed_pnl_pct
+        FROM daily_trade_positions
+    """).fetchone()
+    return dict(rows) if rows else {}

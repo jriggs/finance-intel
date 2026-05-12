@@ -35,11 +35,13 @@ import signals
 import market_router
 import signals_router
 import broker_router
+import daily_trades_router
 
 router = APIRouter()
 router.include_router(market_router.router)
 router.include_router(signals_router.router)
 router.include_router(broker_router.router)
+router.include_router(daily_trades_router.router)
 
 # References to shared singletons — set by init_finance()
 _llm = None

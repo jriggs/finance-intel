@@ -1562,6 +1562,9 @@
         <div class="nav-item" data-view="picks">
           <span class="icon">📌</span>Picks Tracker
         </div>
+        <div class="nav-item" data-view="trades">
+          <span class="icon">🤖</span>Daily Trades
+        </div>
         <div class="nav-item" data-view="broker">
           <span class="icon">💼</span>Portfolio
         </div>
@@ -2046,6 +2049,70 @@
               </thead>
               <tbody id="closed-picks-tbody"></tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- Daily Trades -->
+        <div class="view" id="view-trades">
+          <div class="kpi-row" id="trades-kpis"></div>
+          <div id="trades-data-warnings" style="display:none"></div>
+
+          <!-- Sell Review -->
+          <div class="card" id="trades-sell-card">
+            <div class="card-title">
+              Sell Review
+              <span class="text-sm text-muted" id="trades-sell-subtitle"></span>
+            </div>
+            <div id="trades-sell-empty" class="empty" style="display:none">No positions flagged for sale today.</div>
+            <table id="trades-sell-table" style="display:none">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Bought</th>
+                  <th>Entry</th>
+                  <th>Current</th>
+                  <th>P&amp;L %</th>
+                  <th>P&amp;L $</th>
+                  <th>Reason</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="trades-sell-tbody"></tbody>
+            </table>
+          </div>
+
+          <!-- Today's Picks -->
+          <div class="card">
+            <div class="card-title">
+              Today's Picks
+              <span class="text-sm text-muted" id="trades-picks-subtitle"></span>
+              <button id="trades-refresh-btn" class="btn btn-sm btn-ghost" style="float:right">↻ Refresh</button>
+              <button id="trades-confirm-btn" class="btn btn-sm" style="float:right;margin-right:6px">Confirm Purchased</button>
+            </div>
+            <div id="trades-picks-loading" class="empty">Loading…</div>
+            <table id="trades-picks-table" style="display:none">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Symbol</th>
+                  <th>Source</th>
+                  <th title="Overall signal score (value + technical + analyst) from score_stock()">Signal</th>
+                  <th>Screener</th>
+                  <th>Volume</th>
+                  <th>Aggregate</th>
+                  <th>Allocation</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="trades-picks-tbody"></tbody>
+            </table>
+          </div>
+
+          <!-- History -->
+          <div class="card">
+            <div class="card-title">History</div>
+            <div id="trades-history-loading" class="empty">Loading…</div>
+            <div id="trades-history"></div>
           </div>
         </div>
 

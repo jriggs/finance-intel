@@ -16,6 +16,12 @@ BACKEND="$SCRIPT_DIR/backend"
 FRONTEND="$SCRIPT_DIR/frontend"
 PORT=8000
 UI_PORT=3000
+PID_FILE="/tmp/finance-intel.pids"
+
+BACKEND_ONLY=false
+for arg in "$@"; do
+  [[ "$arg" == "--backend-only" || "$arg" == "-b" ]] && BACKEND_ONLY=true
+done
 
 # ── Check venv ───────────────────────────────────────────────────────────────
 if [ ! -d "$BACKEND/venv" ]; then
@@ -39,49 +45,71 @@ if [ -z "$MODEL_PATH" ] || [[ "$MODEL_PATH" == *"your-model"* ]] || [[ "$MODEL_P
   [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
 fi
 
+# ── Kill any previously tracked processes ────────────────────────────────────
+if [ -f "$PID_FILE" ]; then
+  echo -e "${YELLOW}Stopping previously started processes…${RESET}"
+  while read -r pid; do
+    kill "$pid" 2>/dev/null || true
+  done < "$PID_FILE"
+  sleep 1
+  while read -r pid; do
+    kill -9 "$pid" 2>/dev/null || true
+  done < "$PID_FILE"
+  rm -f "$PID_FILE"
+fi
+
 # ── Kill any existing servers on same ports ───────────────────────────────────
 if lsof -ti:$PORT &>/dev/null; then
   echo -e "${YELLOW}Stopping existing process on port $PORT…${RESET}"
   lsof -ti:$PORT | xargs kill -9 2>/dev/null || true
   sleep 1
 fi
-if lsof -ti:$UI_PORT &>/dev/null; then
+if [ "$BACKEND_ONLY" = false ] && lsof -ti:$UI_PORT &>/dev/null; then
   echo -e "${YELLOW}Stopping existing process on port $UI_PORT…${RESET}"
   lsof -ti:$UI_PORT | xargs kill -9 2>/dev/null || true
   sleep 1
 fi
 
-# ── Start backend ────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${CYAN}Starting Local LLM Chat…${RESET}"
 echo -e "  Backend:  ${BOLD}http://localhost:$PORT${RESET}"
 echo -e "  Docs:     ${BOLD}http://localhost:$PORT/docs${RESET}"
-echo -e "  Frontend: ${BOLD}http://localhost:$UI_PORT${RESET}"
+if [ "$BACKEND_ONLY" = false ]; then
+  echo -e "  Frontend: ${BOLD}http://localhost:$UI_PORT${RESET}"
+fi
 echo ""
+
+UI_PID=""
 
 # ── Start frontend dev server ─────────────────────────────────────────────────
-cd "$FRONTEND"
-npm run dev > /tmp/finance-intel-ui.log 2>&1 &
-UI_PID=$!
+if [ "$BACKEND_ONLY" = false ]; then
+  cd "$FRONTEND"
+  npm run dev > /tmp/finance-intel-ui.log 2>&1 &
+  UI_PID=$!
 
-echo -n "Waiting for UI server"
-for i in $(seq 1 30); do
-  if curl -s "http://localhost:$UI_PORT" &>/dev/null; then
-    echo ""
-    echo -e "${GREEN}✓ UI server is up${RESET}"
-    break
-  fi
-  echo -n "."
-  sleep 1
-done
-echo ""
+  echo -n "Waiting for UI server"
+  for i in $(seq 1 30); do
+    if curl -s "http://localhost:$UI_PORT" &>/dev/null; then
+      echo ""
+      echo -e "${GREEN}✓ UI server is up${RESET}"
+      break
+    fi
+    echo -n "."
+    sleep 1
+  done
+  echo ""
+fi
 
+# ── Start backend ─────────────────────────────────────────────────────────────
 cd "$BACKEND"
 source venv/bin/activate
 
-# Run uvicorn in background, capture its PID
 python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT --log-level info &
 SERVER_PID=$!
+
+# ── Save PIDs so a future run (or manual kill) can clean them up ──────────────
+echo "$SERVER_PID" > "$PID_FILE"
+[ -n "$UI_PID" ] && echo "$UI_PID" >> "$PID_FILE"
 
 # ── Wait for server to be ready ──────────────────────────────────────────────
 echo -n "Waiting for server"
@@ -97,14 +125,26 @@ done
 echo ""
 
 # ── Open frontend in browser ─────────────────────────────────────────────────
-echo -e "${BOLD}Opening frontend…${RESET}"
-open "http://localhost:$UI_PORT"
+if [ "$BACKEND_ONLY" = false ]; then
+  echo -e "${BOLD}Opening frontend…${RESET}"
+  open "http://localhost:$UI_PORT"
+fi
 
 echo ""
-echo -e "${GREEN}Chat app is running!${RESET}"
+echo -e "${GREEN}App is running!${RESET}"
 echo -e "Press ${BOLD}Ctrl+C${RESET} to stop."
 echo ""
 
-# ── Keep running until Ctrl+C ────────────────────────────────────────────────
-trap "echo ''; echo -e '${YELLOW}Shutting down…${RESET}'; kill $SERVER_PID $UI_PID 2>/dev/null; exit 0" INT TERM
+# ── Shut down cleanly on Ctrl+C or terminal close ────────────────────────────
+cleanup() {
+  echo ""
+  echo -e "${YELLOW}Shutting down…${RESET}"
+  kill "$SERVER_PID" $UI_PID 2>/dev/null || true
+  sleep 1
+  kill -9 "$SERVER_PID" $UI_PID 2>/dev/null || true
+  rm -f "$PID_FILE"
+  exit 0
+}
+trap cleanup INT TERM HUP
+
 wait $SERVER_PID
