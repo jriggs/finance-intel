@@ -2,12 +2,28 @@
 import sys
 from unittest.mock import MagicMock, patch
 
-# Mock imports before importing signals
-sys.modules['db'] = MagicMock()
-sys.modules['crawler'] = MagicMock()
-sys.modules['ingestion'] = MagicMock()
+# signals.py imports db/crawler/ingestion at module load, which pull in heavy,
+# side-effectful dependencies (sqlite, chromadb). Stub them in sys.modules just
+# long enough to import signals in isolation, then restore the originals so these
+# mocks never leak into other test modules — e.g. test_finance_api, which needs
+# the real `db` module for its @patch("db...") targets to resolve correctly.
+_STUBBED_MODULES = ("db", "crawler", "ingestion")
+_saved_modules = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
+for _name in _STUBBED_MODULES:
+    sys.modules[_name] = MagicMock()
 
-import signals
+import signals  # noqa: E402 — intentionally imported after the stubs above
+
+for _name, _original in _saved_modules.items():
+    if _original is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _original
+
+# signals binds the db module under the alias `_portfolio`. Patch the sentiment
+# tests against that exact object so they work whether signals imported the stub
+# (this file run alone) or the real module (already imported by the full suite).
+_db = signals._portfolio
 
 
 def test_macro_score_by_sector():
@@ -64,8 +80,8 @@ def test_macro_score_by_sector():
 def test_sentiment_weighting():
     """Test symbol-specific sentiment weighted 75% over generic 25%."""
     # Setup: generic market has neutral sentiment, AAPL-specific very bullish
-    with patch('db.get_crawl_results') as mock_crawl, \
-         patch('db.get_sentiment') as mock_sentiment:
+    with patch.object(_db, 'get_crawl_results') as mock_crawl, \
+         patch.object(_db, 'get_sentiment') as mock_sentiment:
         # Generic market headlines: neutral
         generic_items = [
             {"title": "Market mixed today", "text": ""},

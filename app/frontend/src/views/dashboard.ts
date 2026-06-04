@@ -40,8 +40,8 @@ export async function loadAccountKpis(): Promise<void> {
     const pnl = $("kpi-pnl");
     if (!acct.error) {
       pnl.textContent =
-        `${fmtDollar(acct.pnl_today)  } (${  fmtPct(acct.pnl_today_pct)  })`;
-      pnl.className = `kpi-value ${  colorPct(acct.pnl_today)}`;
+        `${fmtDollar(acct.pnl_today)} (${fmtPct(acct.pnl_today_pct)})`;
+      pnl.className = `kpi-value ${colorPct(acct.pnl_today)}`;
     } else {
       pnl.textContent = "—";
     }

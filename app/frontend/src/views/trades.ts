@@ -86,15 +86,15 @@ let _todayData: TodayResponse | null = null;
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
 function fmtScore(v: number | null): string {
-  return v != null ? fmt(v) : '—';
+  return v !== null ? fmt(v) : '—';
 }
 
 function fmtOptionalDollar(v: number | null): string {
-  return v != null ? fmtDollar(v) : '—';
+  return v !== null ? fmtDollar(v) : '—';
 }
 
 function fmtOptionalPct(v: number | null): string {
-  return v != null ? fmtPct(v) : '—';
+  return v !== null ? fmtPct(v) : '—';
 }
 
 function statusBadge(status: string): string {
@@ -127,9 +127,9 @@ function renderKpis(stats: StatsResponse): void {
     ['Open Positions',    String(stats.open_count    ?? '—')],
     ['Flagged Sell',      String(stats.flagged_count ?? '—')],
     ['Closed',            String(stats.closed_count  ?? '—')],
-    ['Total Invested',    stats.total_invested    != null ? fmtDollar(stats.total_invested)    : '—'],
-    ['Open P&L',          stats.open_pnl_usd      != null ? `<span class="${pnlClass}">${fmtDollar(openPnl)}</span>` : '—'],
-    ['Avg Closed Return', stats.avg_closed_pnl_pct != null ? fmtPct(stats.avg_closed_pnl_pct) : '—'],
+    ['Total Invested',    stats.total_invested    !== null ? fmtDollar(stats.total_invested)    : '—'],
+    ['Open P&L',          stats.open_pnl_usd      !== null ? `<span class="${pnlClass}">${fmtDollar(openPnl)}</span>` : '—'],
+    ['Avg Closed Return', stats.avg_closed_pnl_pct !== null ? fmtPct(stats.avg_closed_pnl_pct) : '—'],
   ];
 
   $('trades-kpis').innerHTML = items
@@ -237,12 +237,12 @@ function renderPicks(
       <td class="mono">${fmtDollar(p.allocation_usd)}</td>
       <td>
         ${statusBadge(p.status)}
-        ${p.status === STATUS.PURCHASED && p.entry_price != null ? `
+        ${p.status === STATUS.PURCHASED && p.entry_price !== null ? `
           <div class="text-sm">
             ${fmtDollar(p.entry_price)} → ${fmtOptionalDollar(p.current_price)}
             <span class="${colorPct(p.pnl_pct ?? 0)}">
-              ${p.pnl_pct != null ? fmtPct(p.pnl_pct) : ''}
-              ${p.pnl_usd != null ? `(${fmtDollar(p.pnl_usd)})` : ''}
+              ${p.pnl_pct !== null ? fmtPct(p.pnl_pct) : ''}
+              ${p.pnl_usd !== null ? `(${fmtDollar(p.pnl_usd)})` : ''}
             </span>
           </div>
         ` : ''}
@@ -277,7 +277,7 @@ function renderHistory(sessions: HistorySession[]): void {
         <td class="mono">${fmtDollar(p.allocation_usd)}</td>
         <td>${statusBadge(p.status)}</td>
         <td class="mono">${fmtOptionalDollar(p.entry_price)}</td>
-        <td class="mono">${p.current_price != null ? fmtDollar(p.current_price) : fmtOptionalDollar(p.exit_price)}</td>
+        <td class="mono">${p.current_price !== null ? fmtDollar(p.current_price) : fmtOptionalDollar(p.exit_price)}</td>
         <td class="${colorPct(p.pnl_pct ?? 0)} mono">${fmtOptionalPct(p.pnl_pct)}</td>
         <td class="${colorPct(p.pnl_usd ?? 0)} mono">${fmtOptionalDollar(p.pnl_usd)}</td>
         <td class="text-sm text-muted">${p.sell_reason ?? ''}</td>
@@ -345,7 +345,7 @@ export async function confirmTrades(): Promise<void> {
 
   const prices: Record<string, number> = {};
   for (const p of picks) {
-    const defaultPrice = p.current_price != null ? p.current_price.toFixed(2) : '';
+    const defaultPrice = p.current_price !== null ? p.current_price.toFixed(2) : '';
     const input = prompt(
       `Entry price for ${p.symbol}?\n(Allocation: ${fmtDollar(p.allocation_usd)})`,
       defaultPrice,

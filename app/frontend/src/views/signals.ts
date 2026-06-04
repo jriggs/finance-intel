@@ -9,9 +9,9 @@ import type { Signal } from '../core/types.js';
 
 export async function loadSignals(force = false): Promise<void> {
   $('signals-grid').innerHTML = spinner();
-  const url = `/api/finance/signals/watchlist${  force ? '?force=true' : ''}`;
+  const url = `/api/finance/signals/watchlist${force ? '?force=true' : ''}`;
   const d = await apiFetch<{ scores: Signal[]; cached_at?: string }>(url).catch(() => ({ scores: [], cached_at: undefined }));
-  if (d.cached_at) $('signals-cached').textContent = `Updated ${  d.cached_at.slice(0, 16).replace('T', ' ')}`;
+  if (d.cached_at) $('signals-cached').textContent = `Updated ${d.cached_at.slice(0, 16).replace('T', ' ')}`;
   renderSignalCards($('signals-grid'), d.scores || []);
 }
 
@@ -34,7 +34,7 @@ export function renderSignalCards(el: HTMLElement, scores: Signal[]): void {
         ${s.sentiment  ? `<span class="grade-badge grade-${s.sentiment.grade  || 'D'}">SE:${s.sentiment.grade  || '?'}</span>` : ''}
       </div>
       ${s.pe_ratio ? `<div class="sub-text">P/E ${fmt(s.pe_ratio)}</div>` : ''}
-      <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${  r}`).join('<br>')}</div>
+      <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${r}`).join('<br>')}</div>
     </div>
   `).join('');
 }
@@ -59,7 +59,7 @@ export async function loadRecommendations(): Promise<void> {
             <span class="sig-card-price">${s.score || 0}</span>
           </div>
           <div class="sig-card-rec"><span class="rec-badge rec-${s.recommendation}">${s.recommendation}</span></div>
-          <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${  r}`).join('<br>')}</div>
+          <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${r}`).join('<br>')}</div>
         </div>
       `).join('');
     } else {
@@ -151,7 +151,7 @@ function renderScreenerResults(d: ScreenerResult, name: string): void {
           <span class="sig-card-price">${s.score || 0}</span>
         </div>
         <div class="sig-card-rec"><span class="rec-badge rec-${s.recommendation}">${s.recommendation}</span></div>
-        <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${  r}`).join('<br>')}</div>
+        <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${r}`).join('<br>')}</div>
       </div>
     `).join('');
   } else {

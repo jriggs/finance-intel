@@ -241,7 +241,7 @@ export function renderNews(el: HTMLElement, items: NewsItem[]): void {
       ${n.thumbnail ? `<img class="news-thumb" src="${n.thumbnail}" onerror="this.style.display='none'" />` : ""}
       <div class="news-body">
         <div class="news-title"><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></div>
-        <div class="news-meta">${n.publisher ?? ""} ${n.published ? `· ${  n.published.slice(0, 10)}` : ""}</div>
+        <div class="news-meta">${n.publisher ?? ""} ${n.published ? `· ${n.published.slice(0, 10)}` : ""}</div>
       </div>
     </div>
   `,

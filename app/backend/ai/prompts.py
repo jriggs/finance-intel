@@ -10,6 +10,8 @@ To add a new template:
   No other code needs to change (OCP).
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from pathlib import Path
 

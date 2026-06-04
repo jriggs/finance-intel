@@ -15,9 +15,9 @@ export function parseRoute(): RouteState {
 }
 
 export function navigate(view: string, params: Record<string, string> = {}): void {
-  let url = `/${  view}`;
+  let url = `/${view}`;
   const qs = new URLSearchParams(params).toString();
-  if (qs) url += `?${  qs}`;
+  if (qs) url += `?${qs}`;
   history.pushState(null, '', url);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }

@@ -184,7 +184,7 @@ function router(): void {
   document
     .querySelectorAll(".view")
     .forEach((v) => v.classList.remove("active"));
-  const viewEl = document.getElementById(`view-${  view}`);
+  const viewEl = document.getElementById(`view-${view}`);
   if (!viewEl) return;
   viewEl.classList.add("active");
 

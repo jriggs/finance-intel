@@ -4,6 +4,8 @@ Uses trafilatura for high-quality article extraction + BeautifulSoup fallback.
 Respects robots.txt and rate-limits requests.
 """
 
+from __future__ import annotations
+
 import asyncio
 import re
 from collections import deque

@@ -242,7 +242,7 @@ class TestAnalystScore:
 class TestTechnicalScore:
     """Test technical analysis scoring."""
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_rsi_oversold_recovery(self, mock_price_hist, basic_info, price_history_6mo):
         """RSI 30-45 (recovering from oversold) should award 15 points."""
         mock_price_hist.return_value = price_history_6mo.copy()
@@ -253,7 +253,7 @@ class TestTechnicalScore:
         assert score >= 15
         assert any("recovering from oversold" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_rsi_overbought(self, mock_price_hist, basic_info, price_history_6mo):
         """RSI > 70 should deduct 5 points."""
         price_history_6mo.loc[price_history_6mo.index[-1], "rsi"] = 75.0
@@ -262,7 +262,7 @@ class TestTechnicalScore:
         _, reasons = _technical_score(basic_info, "TEST")
         assert any("overbought" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_above_200_sma(self, mock_price_hist, basic_info, price_history_6mo):
         """Price > 200 SMA should award 8 points."""
         price_history_6mo.loc[price_history_6mo.index[-1], "close"] = 105.0
@@ -273,7 +273,7 @@ class TestTechnicalScore:
         assert score >= 8
         assert any("200-day SMA" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_golden_cross(self, mock_price_hist, basic_info, price_history_6mo):
         """SMA50 > SMA200 should award 5 points."""
         price_history_6mo.loc[price_history_6mo.index[-1], "sma50"] = 105.0
@@ -284,7 +284,7 @@ class TestTechnicalScore:
         assert score >= 5
         assert any("Golden cross" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_near_52w_low(self, mock_price_hist, basic_info, price_history_6mo):
         """Price near 52-week low should award 10 points."""
         basic_info["52w_low"] = 80.0
@@ -296,7 +296,7 @@ class TestTechnicalScore:
         assert score >= 10
         assert any("52-week low" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_near_52w_high(self, mock_price_hist, basic_info, price_history_6mo):
         """Price near 52-week high should deduct 3 points."""
         basic_info["52w_low"] = 80.0
@@ -307,7 +307,7 @@ class TestTechnicalScore:
         _, reasons = _technical_score(basic_info, "TEST")
         assert any("52-week high" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_volume_surge(self, mock_price_hist, basic_info, price_history_6mo):
         """Volume > 1.5x average should award 5 points."""
         basic_info["volume"] = 2e7
@@ -318,7 +318,7 @@ class TestTechnicalScore:
         assert score >= 5
         assert any("volume" in r.lower() for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_macd_bullish(self, mock_price_hist, basic_info, price_history_6mo):
         """MACD > signal should award 5 points."""
         price_history_6mo.loc[price_history_6mo.index[-1], "macd"] = 2.0
@@ -329,7 +329,7 @@ class TestTechnicalScore:
         assert score >= 5
         assert any("MACD bullish" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_empty_price_history(self, mock_price_hist, basic_info):
         """Empty price history should return 0 score."""
         mock_price_hist.return_value = pd.DataFrame()
@@ -338,7 +338,7 @@ class TestTechnicalScore:
         assert score == 0
         assert len(reasons) == 0
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_score_bounded(self, mock_price_hist, basic_info, price_history_6mo):
         """Score should be bounded 0-35."""
         mock_price_hist.return_value = price_history_6mo
@@ -351,7 +351,7 @@ class TestTechnicalScore:
 class TestShortTermScore:
     """Test 1-30 day momentum scoring."""
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_rsi_recovery(self, mock_price_hist, basic_info, price_history_1mo):
         """RSI 30-45 should award 20 points."""
         price_history_1mo.loc[price_history_1mo.index[-1], "rsi"] = 40.0
@@ -361,7 +361,7 @@ class TestShortTermScore:
         assert score >= 20
         assert any("recovering from oversold" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_macd_bullish_momentum(self, mock_price_hist, basic_info, price_history_1mo):
         """MACD > signal should award 15 points."""
         price_history_1mo.loc[price_history_1mo.index[-1], "macd"] = 3.0
@@ -372,7 +372,7 @@ class TestShortTermScore:
         assert score >= 15
         assert any("MACD bullish" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_above_sma20(self, mock_price_hist, basic_info, price_history_1mo):
         """Price > SMA20 should award 12 points."""
         price_history_1mo.loc[price_history_1mo.index[-1], "close"] = 115.0
@@ -383,7 +383,7 @@ class TestShortTermScore:
         assert score >= 12
         assert any("20-day SMA" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_volume_breakout(self, mock_price_hist, basic_info, price_history_1mo):
         """Volume > 2.0x average should award 15 points."""
         basic_info["volume"] = 2.5e7
@@ -394,7 +394,7 @@ class TestShortTermScore:
         assert score >= 15
         assert any("Volume" in r and "breakout" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_week_momentum_up(self, mock_price_hist, basic_info, price_history_1mo):
         """Up >5% in 1 week should award 10 points."""
         # Last price 20, 1-week-ago price (5 days back) 10
@@ -406,14 +406,14 @@ class TestShortTermScore:
         assert score >= 10
         assert any("week" in r.lower() for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_score_bounded(self, mock_price_hist, basic_info, price_history_1mo):
         """Score should be bounded 0-100."""
         mock_price_hist.return_value = price_history_1mo
         score, _ = _short_term_score(basic_info, "TEST")
         assert 0 <= score <= 100
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_empty_price_history(self, mock_price_hist, basic_info):
         """Empty price history should return 0 score."""
         mock_price_hist.return_value = pd.DataFrame()
@@ -427,7 +427,7 @@ class TestShortTermScore:
 class TestLongTermScore:
     """Test long-term fundamentals + technicals scoring."""
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_combines_value_and_analyst(self, mock_price_hist, basic_info, price_history_6mo):
         """Long-term should include value_score + analyst_score."""
         mock_price_hist.return_value = price_history_6mo
@@ -438,7 +438,7 @@ class TestLongTermScore:
         assert any("P/E" in r for r in reasons) or any("analyst" in r.lower() for r in reasons)
         assert 0 <= score <= 100
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_above_200sma_long(self, mock_price_hist, basic_info, price_history_6mo):
         """Price > 200 SMA should award 12 points."""
         price_history_6mo.loc[price_history_6mo.index[-1], "close"] = 105.0
@@ -448,7 +448,7 @@ class TestLongTermScore:
         _, reasons = _long_term_score(basic_info, "TEST")
         assert any("200-day SMA" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_golden_cross_long(self, mock_price_hist, basic_info, price_history_6mo):
         """Golden cross should award 8 points."""
         price_history_6mo.loc[price_history_6mo.index[-1], "sma50"] = 105.0
@@ -458,7 +458,7 @@ class TestLongTermScore:
         _, reasons = _long_term_score(basic_info, "TEST")
         assert any("Golden cross" in r for r in reasons)
 
-    @patch("signals.get_price_history")
+    @patch("signals.scoring.get_price_history")
     def test_score_bounded(self, mock_price_hist, basic_info, price_history_6mo):
         """Score should be bounded 0-100."""
         mock_price_hist.return_value = price_history_6mo
@@ -471,8 +471,8 @@ class TestLongTermScore:
 class TestScoreStock:
     """Test full signal analysis."""
 
-    @patch("signals.get_price_history")
-    @patch("signals.get_stock_info")
+    @patch("signals.scoring.get_price_history")
+    @patch("signals.scoring.get_stock_info")
     def test_returns_full_dict(self, mock_info, mock_price_hist, basic_info, price_history_6mo):
         """score_stock should return complete signal dict."""
         mock_info.return_value = basic_info
@@ -490,8 +490,8 @@ class TestScoreStock:
         assert "long_term" in result
         assert "all_reasons" in result
 
-    @patch("signals.get_price_history")
-    @patch("signals.get_stock_info")
+    @patch("signals.scoring.get_price_history")
+    @patch("signals.scoring.get_stock_info")
     def test_grade_a_high_score(self, mock_info, mock_price_hist, basic_info, price_history_6mo):
         """Score ≥70 should be grade A."""
         basic_info["pe_ratio"] = 10.0  # High value score
@@ -503,8 +503,8 @@ class TestScoreStock:
         if result["score"] >= 70:
             assert result["grade"] == "A"
 
-    @patch("signals.get_price_history")
-    @patch("signals.get_stock_info")
+    @patch("signals.scoring.get_price_history")
+    @patch("signals.scoring.get_stock_info")
     def test_recommendation_mapping(self, mock_info, mock_price_hist, basic_info, price_history_6mo):
         """Recommendations should map to scores correctly."""
         mock_info.return_value = basic_info
@@ -522,8 +522,8 @@ class TestScoreStock:
         else:
             assert result["recommendation"] == "AVOID"
 
-    @patch("signals.get_price_history")
-    @patch("signals.get_stock_info")
+    @patch("signals.scoring.get_price_history")
+    @patch("signals.scoring.get_stock_info")
     def test_breakdown_structure(self, mock_info, mock_price_hist, basic_info, price_history_6mo):
         """Breakdown should have value, technical, analyst with scores and reasons."""
         mock_info.return_value = basic_info
@@ -538,8 +538,8 @@ class TestScoreStock:
             assert "max" in breakdown[dim]
             assert "reasons" in breakdown[dim]
 
-    @patch("signals.get_price_history")
-    @patch("signals.get_stock_info")
+    @patch("signals.scoring.get_price_history")
+    @patch("signals.scoring.get_stock_info")
     def test_short_term_grade(self, mock_info, mock_price_hist, basic_info, price_history_6mo):
         """Short-term should have score and grade."""
         mock_info.return_value = basic_info
@@ -551,8 +551,8 @@ class TestScoreStock:
         assert 0 <= st["score"] <= 100
         assert st["grade"] in ["A", "B", "C", "D"]
 
-    @patch("signals.get_price_history")
-    @patch("signals.get_stock_info")
+    @patch("signals.scoring.get_price_history")
+    @patch("signals.scoring.get_stock_info")
     def test_long_term_grade(self, mock_info, mock_price_hist, basic_info, price_history_6mo):
         """Long-term should have score and grade."""
         mock_info.return_value = basic_info

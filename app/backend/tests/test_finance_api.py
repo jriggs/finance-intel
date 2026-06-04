@@ -102,21 +102,18 @@ class TestSymbolsEndpoint:
     """Test /api/finance/symbols endpoint."""
 
     @patch("db.get_symbol_count", return_value=0)
-    @patch("fundamentals.get_all_tickers", return_value=[
-        {"symbol": "AAPL", "name": "Apple Inc."},
-        {"symbol": "MSFT", "name": "Microsoft Corp."},
-    ])
-    @patch("db.save_symbols")
-    def test_symbols_fetch_on_empty(self, mock_save, mock_fetch, mock_count, client):
-        """Empty DB should fetch from SEC EDGAR."""
+    def test_symbols_fallback_when_empty(self, mock_count, client):
+        """Empty DB (scheduler hasn't populated symbols yet) returns the static fallback universe."""
+        import signals
+
         response = client.get("/api/finance/symbols")
         assert response.status_code == 200
 
         data = response.json()
-        assert "symbols" in data
-        assert "count" in data
-        assert data["count"] == 2
-        assert data["symbols"][0]["symbol"] == "AAPL"
+        assert data["cached"] is False
+        assert data["count"] == len(signals._FALLBACK_UNIVERSE)
+        assert len(data["symbols"]) == data["count"]
+        assert all("symbol" in s and "name" in s for s in data["symbols"])
 
     @patch("db.get_symbol_count", return_value=100)
     @patch("db.get_symbols", return_value=[

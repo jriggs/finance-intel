@@ -40,7 +40,9 @@ export default [
       "@typescript-eslint/consistent-type-imports": "warn",
       "@typescript-eslint/no-require-imports": "error",
       "@typescript-eslint/explicit-member-accessibility": ["warn", { accessibility: "explicit" }],
-      "eqeqeq": ["warn", "always"],
+      // Strict equality everywhere, but allow the `== null` / `!= null` idiom
+      // which intentionally matches both null and undefined.
+      "eqeqeq": ["warn", "always", { "null": "ignore" }],
       "no-console": ["warn", { allow: ["warn", "error"] }],
       "no-debugger": "warn",
       "prefer-const": "warn",

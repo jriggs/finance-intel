@@ -3,6 +3,8 @@ Trainer — manages LoRA fine-tuning jobs launched as subprocesses.
 Reads progress from train/training_status.json and train/training_log.jsonl.
 """
 
+from __future__ import annotations
+
 import contextlib
 import json
 import subprocess

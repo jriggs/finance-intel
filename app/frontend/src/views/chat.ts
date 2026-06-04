@@ -48,7 +48,7 @@ async function streamLlm(
     const err = await resp
       .json()
       .catch(() => ({ detail: resp.statusText })) as { detail?: string };
-    bubble.textContent = `⚠ ${  err.detail ?? resp.statusText}`;
+    bubble.textContent = `⚠ ${err.detail ?? resp.statusText}`;
     return "";
   }
 
@@ -76,7 +76,7 @@ async function streamLlm(
           bubble.textContent = full;
         }
         if (obj.error) {
-          bubble.textContent = `⚠ ${  obj.error}`;
+          bubble.textContent = `⚠ ${obj.error}`;
         }
       } catch {
         /* partial JSON */
@@ -102,7 +102,7 @@ export async function sendChat(): Promise<void> {
   try {
     await streamLlm(msg, currentSymbol || null, model, bubble);
   } catch (e) {
-    bubble.textContent = `⚠ ${  (e as Error).message}`;
+    bubble.textContent = `⚠ ${(e as Error).message}`;
   } finally {
     ($("chat-send-btn") as HTMLButtonElement).disabled = false;
   }

@@ -4,6 +4,8 @@ Refresh symbols list from top market cap stocks.
 Clears old data and rebuilds.
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 

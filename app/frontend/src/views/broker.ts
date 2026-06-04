@@ -30,7 +30,7 @@ export async function loadBroker(): Promise<void> {
     [
       "Today P&L",
       acct.pnl_today !== null && acct.pnl_today !== undefined
-        ? `${fmtDollar(acct.pnl_today)  } (${  fmtPct(acct.pnl_today_pct)  })`
+        ? `${fmtDollar(acct.pnl_today)} (${fmtPct(acct.pnl_today_pct)})`
         : "—",
     ],
   ];

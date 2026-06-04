@@ -3,6 +3,8 @@ Full-stack Chat LLM App — FastAPI Backend
 Supports: local GGUF model inference, streaming SSE, RAG with ChromaDB
 """
 
+from __future__ import annotations
+
 # ── Package path wiring ───────────────────────────────────────────────────────
 # Adds core/, services/, ai/, routers/ to sys.path so all modules can be
 # imported by their bare name (e.g. `import signals`, `import db`) regardless
@@ -18,7 +20,6 @@ del _sys, _Path, _here, _pkg, _p
 # ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
-import collections
 import contextlib
 import json
 import logging
@@ -40,44 +41,12 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-# Ring buffer for recent WARNING+ entries — accessible via /api/finance/logs
-_LOG_BUFFER: collections.deque = collections.deque(maxlen=500)
+# Ring buffer, root config, and third-party noise suppression live in
+# logging_config. _LOG_BUFFER is re-exported because finance_router (the
+# /api/finance/logs endpoint) reads it as main._LOG_BUFFER.
+from logging_config import LOG_BUFFER as _LOG_BUFFER, configure_logging
 
-
-class _RingBufferHandler(logging.Handler):
-    def emit(self, record: logging.LogRecord):
-        with contextlib.suppress(Exception):
-            _LOG_BUFFER.append({
-                "ts":      self.formatter.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
-                "level":   record.levelname,
-                "logger":  record.name,
-                "message": record.getMessage(),
-            })
-
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(name)-20s  %(levelname)-8s  %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-)
-
-_ring_handler = _RingBufferHandler(level=logging.WARNING)
-_ring_handler.setFormatter(logging.Formatter())
-logging.getLogger().addHandler(_ring_handler)
-
-# Suppress noisy third-party loggers that produce non-actionable warnings
-for _noisy in ("transformers", "transformers_modules", "sentence_transformers",
-               "chromadb", "httpx", "httpcore", "urllib3", "filelock"):
-    logging.getLogger(_noisy).setLevel(logging.ERROR)
-
-# Filter yfinance 401/Invalid Crumb errors — our circuit breaker handles these;
-# the raw yfinance ERROR log is noise.
-class _YfCrumbFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        return "Invalid Crumb" not in msg and ("401" not in msg or "yfinance" not in record.name)
-
-logging.getLogger("yfinance").addFilter(_YfCrumbFilter())
+configure_logging()
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -106,18 +75,14 @@ from search import (
 from search import (
     shutdown_executor as shutdown_search_executor,
 )
-from trainer import (
-    get_log as trainer_log,
-)
-from trainer import (
-    get_status as trainer_status,
-)
-from trainer import (
-    list_adapters,
-    list_datasets,
-    save_dataset_file,
-    start_training,
-    stop_training,
+from training_router import router as training_router
+from chat_context import (
+    Message,
+    _assemble_system_prompt,
+    _build_vision_messages,
+    _build_vision_messages_for_description,
+    _image_format,
+    _inject_into_last_user_message,
 )
 
 
@@ -195,6 +160,8 @@ app.add_middleware(
 
 # ── Finance routes (all under /api/finance/*) ─────────────────────────────────
 app.include_router(finance_router)
+# ── Training routes (all under /api/train/*) ──────────────────────────────────
+app.include_router(training_router)
 
 # Serve the finance dashboard at /finance
 from fastapi.responses import FileResponse as _FileResponse
@@ -330,11 +297,7 @@ def scan_models() -> list:
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
-
-class Message(BaseModel):
-    role: str  # "user" | "assistant" | "system"
-    content: str
-
+# Message and the pure chat-context/vision helpers live in chat_context.py.
 
 class ChatRequest(BaseModel):
     messages: list[Message]
@@ -358,66 +321,6 @@ class SourceTextRequest(BaseModel):
 
 class RetrainRequest(BaseModel):
     source_ids: list[str] | None = None  # None = retrain all
-
-
-# ── Image utilities ────────────────────────────────────────────────────────────
-
-def _image_format(image_b64: str) -> str:
-    """Detect image format from the base64 header bytes."""
-    if image_b64.startswith("iVBOR"):   return "png"
-    if image_b64.startswith("R0lGOD"):  return "gif"
-    if image_b64.startswith("UklGR"):   return "webp"
-    return "jpeg"  # default / /9j/ JPEG header
-
-
-def _build_vision_messages_for_description(image_b64: str, user_query: str) -> list:
-    """Build an OpenAI-format message list for detailed image analysis."""
-    fmt = _image_format(image_b64)
-    image_url = f"data:image/{fmt};base64,{image_b64}"
-    query_context = (
-        f"\n\nPay particular attention to aspects relevant to: {user_query}"
-        if user_query else ""
-    )
-    prompt = (
-        "Analyze this image thoroughly and respond in these sections:\n\n"
-        "OCR / TEXT: Extract every piece of visible text exactly as written — "
-        "signs, labels, numbers, tables, captions, watermarks, UI elements, anything.\n\n"
-        "OBJECTS & PEOPLE: Describe all visible objects, people, animals and their positions.\n\n"
-        "SCENE: Colors, lighting, setting, and overall context.\n\n"
-        "DETAILS: Actions, expressions, or any other notable information."
-        + query_context
-    )
-    return [{"role": "user", "content": [
-        {"type": "image_url", "image_url": {"url": image_url}},
-        {"type": "text", "text": prompt},
-    ]}]
-
-
-def _build_vision_messages(system: str, messages: list[Message], image_b64: str) -> list:
-    """
-    Build OpenAI-format messages for multimodal inference.
-    The image is attached to the last user message.
-    """
-    fmt = _image_format(image_b64)
-    image_url = f"data:image/{fmt};base64,{image_b64}"
-
-    result = []
-    if system:
-        result.append({"role": "system", "content": system})
-
-    for i, msg in enumerate(messages):
-        if msg.role == "user" and i == len(messages) - 1:
-            # Attach image to the final user message
-            result.append({
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                    {"type": "text", "text": msg.content},
-                ],
-            })
-        else:
-            result.append({"role": msg.role, "content": msg.content})
-    return result
 
 
 # ── Context assembly ───────────────────────────────────────────────────────────
@@ -459,52 +362,6 @@ async def _fetch_url_context(user_message: str) -> tuple[str, list[str]]:
             print(f"[URL] Failed to fetch {url}: {e}")
 
     return "\n\n---\n\n".join(parts), urls
-
-
-def _assemble_system_prompt(
-    base: str,
-    rag_context: str,
-    web_context: str,
-) -> str:
-    """Append RAG and web-search context blocks to the base system prompt."""
-    system = base
-    if rag_context:
-        system += f"\n\n--- Relevant context from knowledge base ---\n{rag_context}\n--- End context ---"
-    if web_context:
-        system += (
-            f"\n\nYou have already performed a live web search for the user's query. "
-            f"The results are below. Use them to answer — do NOT say you cannot browse the internet.\n\n"
-            f"--- Web search results ---\n{web_context}\n--- End search results ---"
-        )
-    return system
-
-
-def _inject_into_last_user_message(
-    messages: list[Message],
-    url_context: str,
-    image_description: str,
-) -> list[Message]:
-    """
-    Inject fetched URL content and image description directly into the last
-    user message. Placing context in the user turn (rather than only in the
-    system prompt) ensures the model treats it as ground truth.
-    Returns a new list; the original is not mutated.
-    """
-    result = list(messages)
-    for i in range(len(result) - 1, -1, -1):
-        if result[i].role == "user":
-            extra = ""
-            if url_context:
-                extra += (
-                    f"\n\n[The following content was fetched live from the URL you mentioned"
-                    f" — use it to answer]\n{url_context}"
-                )
-            if image_description:
-                extra += f"\n\n[Image content: {image_description}]"
-            if extra:
-                result[i] = Message(role="user", content=result[i].content + extra)
-            break
-    return result
 
 
 # ── Vision swap ────────────────────────────────────────────────────────────────
@@ -1049,96 +906,5 @@ async def _retrain_sources(source_ids: list[str] | None):
         await _crawl_and_index(source["id"], source["id"])
 
 
-# ── Training / Fine-tuning Endpoints ──────────────────────────────────────────
-
-class TrainRequest(BaseModel):
-    dataset_name: str
-    model_id: str = "mistralai/Mistral-7B-Instruct-v0.2"
-    iters: int = 500
-    batch_size: int = 4
-    learning_rate: float = 1e-4
-    lora_rank: int = 8
-    lora_layers: int = 16
-    max_seq_len: int = 2048
-
-
-class DatasetUploadRequest(BaseModel):
-    name: str
-    content: str        # Raw file content as string
-    fmt: str = "jsonl"  # "jsonl", "csv", or "txt"
-
-
-@app.get("/api/train/status")
-async def train_status():
-    return trainer_status()
-
-
-@app.get("/api/train/log")
-async def train_log(last_n: int = 100):
-    return {"log": trainer_log(last_n)}
-
-
-@app.get("/api/train/datasets")
-async def get_datasets():
-    return {"datasets": list_datasets()}
-
-
-@app.get("/api/train/adapters")
-async def get_adapters():
-    return {"adapters": list_adapters()}
-
-
-@app.post("/api/train/datasets/upload")
-async def upload_dataset(req: DatasetUploadRequest):
-    if len(req.content.encode()) > 20 * 1024 * 1024:
-        raise HTTPException(413, "Dataset exceeds 20MB limit")
-    result = save_dataset_file(req.name, req.content, req.fmt)
-    if "error" in result:
-        raise HTTPException(400, result["error"])
-    return result
-
-
-@app.post("/api/train/start")
-async def start_train(req: TrainRequest):
-    result = start_training(
-        dataset_name=req.dataset_name,
-        model_id=req.model_id,
-        iters=req.iters,
-        batch_size=req.batch_size,
-        learning_rate=req.learning_rate,
-        lora_rank=req.lora_rank,
-        lora_layers=req.lora_layers,
-        max_seq_len=req.max_seq_len,
-    )
-    if "error" in result:
-        raise HTTPException(400, result["error"])
-    return result
-
-
-@app.post("/api/train/stop")
-async def stop_train():
-    return stop_training()
-
-
-@app.get("/api/train/stream")
-async def train_stream():
-    """SSE stream of live training log lines."""
-    async def _stream():
-        seen = 0
-        while True:
-            status   = trainer_status()
-            logs     = trainer_log(200)
-            new_lines = logs[seen:]
-            for line in new_lines:
-                yield f"data: {json.dumps(line)}\n\n"
-            seen = len(logs)
-            if status.get("status") in ("done", "error", "stopped", "idle"):
-                yield f"data: {json.dumps({'event': 'end', 'status': status})}\n\n"
-                break
-            await asyncio.sleep(1)
-
-    return StreamingResponse(
-        _stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+# Training / fine-tuning endpoints now live in training_router.py
+# (included above via app.include_router(training_router)).

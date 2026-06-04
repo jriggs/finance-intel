@@ -6,6 +6,8 @@ emit() is fully non-blocking (put_nowait with a per-queue size cap so a slow
 client never stalls the server).
 """
 
+from __future__ import annotations
+
 import asyncio
 import time
 from dataclasses import dataclass, field

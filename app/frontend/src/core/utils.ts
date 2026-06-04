@@ -2,26 +2,29 @@
 
 export const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
 
+/** True for null or undefined — the canonical "no value" check used by the formatters. */
+const isNil = (v: unknown): v is null | undefined => v === null || v === undefined;
+
 export const fmt = (v: number | null | undefined, decimals = 2): string =>
-  v === null || v === undefined ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  isNil(v) ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 
 export const fmtDollar = (v: number | null | undefined): string =>
-  v === null || v === undefined ? '—' : `$${  fmt(v)}`;
+  isNil(v) ? '—' : `$${fmt(v)}`;
 
 export const fmtPct = (v: number | null | undefined): string =>
-  v === null || v === undefined ? '—' : `${(v >= 0 ? '+' : '-') + fmt(Math.abs(v))}%`;
+  isNil(v) ? '—' : `${v >= 0 ? '+' : '-'}${fmt(Math.abs(v))}%`;
 
 export const fmtBig = (v: number | null | undefined): string => {
-  if (v === null || v === undefined) return '—';
+  if (isNil(v)) return '—';
   const n = Number(v);
-  if (Math.abs(n) >= 1e12) return `$${  fmt(n / 1e12, 2)  }T`;
-  if (Math.abs(n) >= 1e9)  return `$${  fmt(n / 1e9,  2)  }B`;
-  if (Math.abs(n) >= 1e6)  return `$${  fmt(n / 1e6,  2)  }M`;
-  return `$${  fmt(n, 0)}`;
+  if (Math.abs(n) >= 1e12) return `$${fmt(n / 1e12, 2)}T`;
+  if (Math.abs(n) >= 1e9)  return `$${fmt(n / 1e9, 2)}B`;
+  if (Math.abs(n) >= 1e6)  return `$${fmt(n / 1e6, 2)}M`;
+  return `$${fmt(n, 0)}`;
 };
 
 export const colorPct = (v: number | null | undefined): string =>
-  v === null || v === undefined ? '' : v >= 0 ? 'text-green' : 'text-red';
+  isNil(v) ? '' : v >= 0 ? 'text-green' : 'text-red';
 
 export const spinner = (): string => '<div class="spinner"></div>';
 
