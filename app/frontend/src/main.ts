@@ -20,6 +20,8 @@ import {
 } from "./views/chart.js";
 import {
   loadSignals,
+  getGateSettings,
+  setGateSettings,
   loadRecommendations,
   initScreenerTabs,
   selectScreener,
@@ -261,6 +263,26 @@ function wireEvents(): void {
   $("trades-refresh-btn").addEventListener("click", () => void loadTrades(true));
   $("trades-confirm-btn").addEventListener("click", () => void confirmTrades());
   $("signals-refresh-btn").addEventListener("click", () => void loadSignals(true));
+
+  const showFilteredEl = $("signals-show-filtered") as HTMLInputElement;
+  const maxVolEl = $("signals-max-vol") as HTMLInputElement;
+  const minDvolEl = $("signals-min-dvol") as HTMLInputElement;
+  const gateSettings = getGateSettings();
+  showFilteredEl.checked = gateSettings.showFiltered;
+  maxVolEl.value = String(Math.round(gateSettings.maxVolatility * 10000) / 100);
+  minDvolEl.value = String(Math.round((gateSettings.minDollarVolume / 1e6) * 100) / 100);
+
+  showFilteredEl.addEventListener("change", (e) =>
+    setGateSettings({ showFiltered: (e.target as HTMLInputElement).checked }),
+  );
+  maxVolEl.addEventListener("change", (e) => {
+    const pct = parseFloat((e.target as HTMLInputElement).value);
+    if (!Number.isNaN(pct) && pct > 0) setGateSettings({ maxVolatility: pct / 100 });
+  });
+  minDvolEl.addEventListener("change", (e) => {
+    const millions = parseFloat((e.target as HTMLInputElement).value);
+    if (!Number.isNaN(millions) && millions >= 0) setGateSettings({ minDollarVolume: millions * 1e6 });
+  });
   $("rec-run-btn").addEventListener("click", () => void runRecommendationsNow());
   $("screener-run-btn").addEventListener("click", () => void runCurrentScreener());
   $("volume-refresh-btn").addEventListener("click", () => void loadVolumeResults());

@@ -5,19 +5,92 @@ import { $, fmt, spinner, empty, loadingBlock } from '../core/utils.js';
 import { navigateToStock } from '../core/router.js';
 import type { Signal } from '../core/types.js';
 
+// ── Shared pre-entry gate (vol/liquidity) ──────────────────────────────────────
+// Defaults mirror daily_trades_router (_MAX_VOLATILITY / _MIN_DOLLAR_VOLUME) so
+// every grid on the Signals page — watchlist, recommendations, screeners —
+// flags (and can hide) names that would fail the daily picker's filters.
+// Thresholds and visibility are both user-configurable from Settings; this is
+// a display-only filter and does not affect what the daily picker actually trades.
+
+interface SignalsGateSettings {
+  showFiltered: boolean;
+  maxVolatility: number;    // fraction, e.g. 0.55 = 55%
+  minDollarVolume: number;  // dollars/day
+}
+
+const GATE_DEFAULTS: SignalsGateSettings = {
+  showFiltered: false,
+  maxVolatility: 0.55,
+  minDollarVolume: 5_000_000,
+};
+
+const _GATE_SETTINGS_KEY = 'signalsGateSettings_v1';
+
+function loadGateSettings(): SignalsGateSettings {
+  try {
+    const raw = localStorage.getItem(_GATE_SETTINGS_KEY);
+    if (raw) return { ...GATE_DEFAULTS, ...(JSON.parse(raw) as Partial<SignalsGateSettings>) };
+  } catch { /* ignore */ }
+  return { ...GATE_DEFAULTS };
+}
+
+let gateSettings = loadGateSettings();
+
+export function getGateSettings(): SignalsGateSettings {
+  return gateSettings;
+}
+
+/** Settings-page controls drive every grid below; re-renders each from its last-loaded data. */
+export function setGateSettings(next: Partial<SignalsGateSettings>): void {
+  gateSettings = { ...gateSettings, ...next };
+  try {
+    localStorage.setItem(_GATE_SETTINGS_KEY, JSON.stringify(gateSettings));
+  } catch { /* ignore (private browsing, quota, etc.) */ }
+  renderSignalCards($('signals-grid'), lastSignalScores);
+  renderRecCards(lastRecommendations, lastRecGenerated);
+  if (lastScreenerResult) renderScreenerResults(lastScreenerResult, lastScreenerName);
+}
+
+/**
+ * Reason a signal fails a pre-entry gate, or null if it clearly clears them.
+ *
+ * Fails closed on missing data, mirroring daily_trades_router's
+ * _entry_rejection: the volume-analysis cache is mutated continuously by a
+ * background worker, so a stock with no volatility/liquidity reading yet
+ * (never scored, or mid-rescore) can't be confirmed safe and is flagged
+ * rather than waved through.
+ */
+function gateRejection(s: Signal): string | null {
+  const { maxVolatility, minDollarVolume } = gateSettings;
+  if (s.volatility == null) return 'Volatility unavailable (not yet scored)';
+  if (s.volatility > maxVolatility) {
+    return `Vol ${(s.volatility * 100).toFixed(0)}% > ${(maxVolatility * 100).toFixed(0)}% ceiling`;
+  }
+  if (s.dollar_volume == null) return 'Liquidity unavailable (not yet scored)';
+  if (s.dollar_volume < minDollarVolume) {
+    return `Liquidity below $${(minDollarVolume / 1e6).toFixed(0)}M floor`;
+  }
+  return null;
+}
+
 // ── Watchlist signals ─────────────────────────────────────────────────────────
+
+let lastSignalScores: Signal[] = [];
 
 export async function loadSignals(force = false): Promise<void> {
   $('signals-grid').innerHTML = spinner();
   const url = `/api/finance/signals/watchlist${force ? '?force=true' : ''}`;
   const d = await apiFetch<{ scores: Signal[]; cached_at?: string }>(url).catch(() => ({ scores: [], cached_at: undefined }));
   if (d.cached_at) $('signals-cached').textContent = `Updated ${d.cached_at.slice(0, 16).replace('T', ' ')}`;
-  renderSignalCards($('signals-grid'), d.scores || []);
+  lastSignalScores = d.scores || [];
+  renderSignalCards($('signals-grid'), lastSignalScores);
 }
 
 export function renderSignalCards(el: HTMLElement, scores: Signal[]): void {
-  if (!scores.length) { el.innerHTML = empty('No results'); return; }
-  el.innerHTML = scores.map(s => `
+  const rows = scores.map(s => ({ s, rejection: gateRejection(s) }));
+  const visible = !gateSettings.showFiltered ? rows.filter(r => !r.rejection) : rows;
+  if (!visible.length) { el.innerHTML = empty(!gateSettings.showFiltered && rows.length ? 'All results filtered' : 'No results'); return; }
+  el.innerHTML = visible.map(({ s, rejection }) => `
     <div class="sig-card" onclick="navigateToStock('${s.symbol}')">
       <div class="sig-card-top">
         <span class="rec-badge rec-${s.recommendation ?? 'HOLD'} rec-badge-sm">${s.recommendation ?? '—'}</span>
@@ -34,6 +107,7 @@ export function renderSignalCards(el: HTMLElement, scores: Signal[]): void {
         ${s.sentiment  ? `<span class="grade-badge grade-${s.sentiment.grade  || 'D'}">SE:${s.sentiment.grade  || '?'}</span>` : ''}
       </div>
       ${s.pe_ratio ? `<div class="sub-text">P/E ${fmt(s.pe_ratio)}</div>` : ''}
+      ${rejection ? `<div class="sub-text text-red">⚠ ${rejection}</div>` : ''}
       <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${r}`).join('<br>')}</div>
     </div>
   `).join('');
@@ -41,36 +115,49 @@ export function renderSignalCards(el: HTMLElement, scores: Signal[]): void {
 
 // ── Recommendations ───────────────────────────────────────────────────────────
 
+let lastRecommendations: Signal[] = [];
+let lastRecGenerated = 'N/A';
+
 export async function loadRecommendations(): Promise<void> {
   try {
     const d = await apiFetch<{ generated_at?: string; results?: Signal[] | { recommendations?: Signal[] } }>('/api/finance/recommendations');
-    const generated = d.generated_at ? new Date(d.generated_at).toLocaleString() : 'N/A';
-    $('rec-generated').textContent = `Generated: ${generated}`;
+    lastRecGenerated = d.generated_at ? new Date(d.generated_at).toLocaleString() : 'N/A';
+    $('rec-generated').textContent = `Generated: ${lastRecGenerated}`;
 
-    const results: Signal[] = Array.isArray(d.results)
+    lastRecommendations = Array.isArray(d.results)
       ? d.results
       : (d.results as { recommendations?: Signal[] })?.recommendations ?? [];
 
-    if (results.length > 0) {
-      $('rec-grid').innerHTML = results.map(s => `
-        <div class="sig-card" onclick="navigateToStock('${s.symbol}')">
-          <div class="sig-card-header">
-            <span class="sig-card-sym">${s.symbol}</span>
-            <span class="sig-card-price">${s.score || 0}</span>
-          </div>
-          <div class="sig-card-rec"><span class="rec-badge rec-${s.recommendation}">${s.recommendation}</span></div>
-          <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${r}`).join('<br>')}</div>
-        </div>
-      `).join('');
-    } else {
-      const msg = d.generated_at
-        ? `${empty(`No recommendations currently<br><span class="text-sm text-muted">Last generated: ${generated}</span>`)}`
-        : empty('Recommendations will appear here after generation. Click Run Now to start.');
-      $('rec-grid').innerHTML = msg;
-    }
+    renderRecCards(lastRecommendations, lastRecGenerated, d.generated_at != null);
   } catch (e) {
     $('rec-grid').innerHTML = empty(`Error: ${(e as Error).message}`);
     $('rec-generated').textContent = '';
+  }
+}
+
+function renderRecCards(results: Signal[], generated: string, hadRun = results.length > 0): void {
+  const rows = results.map(s => ({ s, rejection: gateRejection(s) }));
+  const visible = !gateSettings.showFiltered ? rows.filter(r => !r.rejection) : rows;
+
+  if (visible.length > 0) {
+    $('rec-grid').innerHTML = visible.map(({ s, rejection }) => `
+      <div class="sig-card" onclick="navigateToStock('${s.symbol}')">
+        <div class="sig-card-header">
+          <span class="sig-card-sym">${s.symbol}</span>
+          <span class="sig-card-price">${s.score || 0}</span>
+        </div>
+        <div class="sig-card-rec"><span class="rec-badge rec-${s.recommendation}">${s.recommendation}</span></div>
+        ${rejection ? `<div class="sub-text text-red">⚠ ${rejection}</div>` : ''}
+        <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${r}`).join('<br>')}</div>
+      </div>
+    `).join('');
+  } else if (!gateSettings.showFiltered && rows.length) {
+    $('rec-grid').innerHTML = empty('All results filtered');
+  } else {
+    const msg = hadRun
+      ? `${empty(`No recommendations currently<br><span class="text-sm text-muted">Last generated: ${generated}</span>`)}`
+      : empty('Recommendations will appear here after generation. Click Run Now to start.');
+    $('rec-grid').innerHTML = msg;
   }
 }
 
@@ -116,6 +203,8 @@ interface ScreenerResult {
 let screeners: Screener[] = [];
 let screenerCache: Record<string, ScreenerResult> = {};
 let currentScreenerName = '';
+let lastScreenerResult: ScreenerResult | null = null;
+let lastScreenerName = '';
 
 export async function initScreenerTabs(restoreActive?: string): Promise<void> {
   try {
@@ -136,6 +225,9 @@ export async function initScreenerTabs(restoreActive?: string): Promise<void> {
 }
 
 function renderScreenerResults(d: ScreenerResult, name: string): void {
+  lastScreenerResult = d;
+  lastScreenerName = name;
+
   const results = d.results ?? [];
   const generated = d.generated_at ? new Date(d.generated_at).toLocaleString() : 'N/A';
   const shortlistNote = d.shortlist_size !== null && d.shortlist_size !== undefined
@@ -143,17 +235,23 @@ function renderScreenerResults(d: ScreenerResult, name: string): void {
     : `${d.universe_size ?? 0} stocks`;
   $('screener-desc').textContent = `${name}  ·  ${results.length} results  ·  ${shortlistNote}  ·  Generated: ${generated}`;
 
-  if (results.length > 0) {
-    $('screen-grid').innerHTML = results.map(s => `
+  const rows = results.map(s => ({ s, rejection: gateRejection(s) }));
+  const visible = !gateSettings.showFiltered ? rows.filter(r => !r.rejection) : rows;
+
+  if (visible.length > 0) {
+    $('screen-grid').innerHTML = visible.map(({ s, rejection }) => `
       <div class="sig-card" onclick="navigateToStock('${s.symbol}')">
         <div class="sig-card-header">
           <span class="sig-card-sym">${s.symbol}</span>
           <span class="sig-card-price">${s.score || 0}</span>
         </div>
         <div class="sig-card-rec"><span class="rec-badge rec-${s.recommendation}">${s.recommendation}</span></div>
+        ${rejection ? `<div class="sub-text text-red">⚠ ${rejection}</div>` : ''}
         <div class="sig-reasons">${(s.reasons ?? s.all_reasons ?? []).slice(0, 2).map(r => `• ${r}`).join('<br>')}</div>
       </div>
     `).join('');
+  } else if (!gateSettings.showFiltered && rows.length) {
+    $('screen-grid').innerHTML = empty('All results filtered');
   } else {
     const msg = d.cached
       ? empty(`No matching stocks<br><span class="text-sm text-muted">Last run: ${generated}</span>`)

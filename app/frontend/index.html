@@ -2096,11 +2096,7 @@
                   <th>Rank</th>
                   <th>Symbol</th>
                   <th>Source</th>
-                  <th title="Overall signal score (value + technical + analyst) from score_stock()">Signal</th>
-                  <th>Screener</th>
-                  <th>Volume</th>
-                  <th>Aggregate</th>
-                  <th>Allocation</th>
+                  <th title="Composite score that drives selection — hover a value for the Signal / Screener / Volume breakdown.">Aggregate</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -2229,6 +2225,32 @@
               </select>
             </div>
             <div id="act-logs"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Signals Page</div>
+            <div class="inline-form form-col-lg">
+              <label class="checkbox-label">
+                <input type="checkbox" id="signals-show-filtered" />
+                Show stocks that fail the vol/liquidity gates
+              </label>
+              <div class="inline-form">
+                <label class="muted-sm">Max volatility:</label>
+                <input id="signals-max-vol" type="number" value="55" min="1" max="500" step="1" />
+                <span class="muted-xs">%</span>
+              </div>
+              <div class="inline-form">
+                <label class="muted-sm">Min liquidity:</label>
+                <input id="signals-min-dvol" type="number" value="5" min="0" max="1000" step="0.5" />
+                <span class="muted-xs">$M/day</span>
+              </div>
+              <div class="muted-xs">
+                Off by default: names above the volatility ceiling or below
+                the liquidity floor (defaults match Daily Trades) are hidden
+                from Watchlist Signals, Recommendations, and Screeners.
+                Changing thresholds here only affects what's shown on this
+                page — Daily Trades still uses its own fixed gates.
+              </div>
+            </div>
           </div>
           <div class="card">
             <div class="card-title">Broker Config</div>

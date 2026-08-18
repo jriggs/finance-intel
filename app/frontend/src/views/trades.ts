@@ -230,11 +230,7 @@ function renderPicks(
       <td class="text-muted">${p.rank}</td>
       <td><strong class="text-blue row-click" onclick="navigateToStock('${p.symbol}')">${p.symbol}</strong></td>
       <td>${sourceBadge(p.source)}</td>
-      <td class="mono">${fmtScore(p.signal_score)}</td>
-      <td class="mono">${fmtScore(p.screener_score)}</td>
-      <td class="mono">${fmtScore(p.volume_score)}</td>
-      <td class="mono"><strong>${fmtScore(p.aggregate_score)}</strong></td>
-      <td class="mono">${fmtDollar(p.allocation_usd)}</td>
+      <td class="mono" title="Signal ${fmtScore(p.signal_score)} · Screener ${fmtScore(p.screener_score)} · Volume ${fmtScore(p.volume_score)}"><strong>${fmtScore(p.aggregate_score)}</strong></td>
       <td>
         ${statusBadge(p.status)}
         ${p.status === STATUS.PURCHASED && p.entry_price !== null ? `
@@ -274,7 +270,6 @@ function renderHistory(sessions: HistorySession[]): void {
         <td>${p.rank}</td>
         <td><span class="text-blue row-click" onclick="navigateToStock('${p.symbol}')">${p.symbol}</span></td>
         <td class="mono">${fmtScore(p.aggregate_score)}</td>
-        <td class="mono">${fmtDollar(p.allocation_usd)}</td>
         <td>${statusBadge(p.status)}</td>
         <td class="mono">${fmtOptionalDollar(p.entry_price)}</td>
         <td class="mono">${p.current_price !== null ? fmtDollar(p.current_price) : fmtOptionalDollar(p.exit_price)}</td>
@@ -293,7 +288,7 @@ function renderHistory(sessions: HistorySession[]): void {
         </div>
         <table>
           <thead><tr>
-            <th>#</th><th>Symbol</th><th>Score</th><th>Alloc</th>
+            <th>#</th><th>Symbol</th><th>Score</th>
             <th>Status</th><th>Entry</th><th>Current</th><th>P&L %</th><th>P&L $</th><th>Reason</th>
           </tr></thead>
           <tbody>${rows}</tbody>
@@ -347,7 +342,7 @@ export async function confirmTrades(): Promise<void> {
   for (const p of picks) {
     const defaultPrice = p.current_price !== null ? p.current_price.toFixed(2) : '';
     const input = prompt(
-      `Entry price for ${p.symbol}?\n(Allocation: ${fmtDollar(p.allocation_usd)})`,
+      `Entry price for ${p.symbol}?`,
       defaultPrice,
     );
     if (!input) return;

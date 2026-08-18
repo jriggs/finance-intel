@@ -13,8 +13,12 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import logging
+
 import db as portfolio
 import market
+
+logger = logging.getLogger("daily_trades")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -49,6 +53,23 @@ _SCREENER_MISSING_DEFAULT = 60.0
 # Minimum dollar allocation.  Picks that would receive less than this after
 # weighting are evicted from the book (they're rounding errors, not positions).
 _MIN_ALLOCATION = 0.50
+
+# ── Pre-entry risk filters (backtest-driven) ──────────────────────────────────
+# Ordered by measured impact on forward return. Trailing volatility is the one
+# variable with real explanatory power (r ≈ −0.34); the score itself has ~zero
+# correlation with return, so it gates (in/out) rather than sizing positions.
+_MAX_VOLATILITY    = 0.55         # reject trailing-60d annualized vol above this
+_MIN_DOLLAR_VOLUME = 5_000_000    # require median 60d dollar volume ≥ $5M
+_SCORE_MIN         = 0.0          # declared score range; out-of-bounds = bug, not a trade
+_SCORE_MAX         = 100.0
+_MAX_POSITION_PCT  = 0.15         # cap any single position at 15% of the budget
+_STOP_LOSS_PCT     = -20.0        # hard exit once a position is down ≥ 20%
+
+# Persistence in the rankings has been an inverse signal (repeat picks
+# underperformed), so fade a name's selection score by this factor per recent
+# appearance. Sizing is equal-weight, so repeats can no longer compound weight.
+_APPEARANCE_DECAY    = 0.85
+_APPEARANCE_LOOKBACK = 5          # sessions to scan for repeat appearances
 
 # Industry dedup: max picks allowed per GICS industry (or sector if industry unknown).
 # Populated from yfinance via score_stock() → volume_analysis_results.sector/industry.
@@ -184,12 +205,14 @@ def _make_candidate(
     vol_map: dict,
     sent_map: dict,
     rec_map: dict,
+    score_map: dict,
     sc_impute: float = _SCREENER_MISSING_DEFAULT,
 ) -> dict:
     sig  = sig_map.get(sym, {})
     sc   = sc_map.get(sym)
     vol  = vol_map.get(sym, {})
     sent = sent_map.get(sym)
+    full = score_map.get(sym) or {}   # full score_stock output → volatility / dollar_volume
 
     # signal_score: watchlist scorer preferred; fall back to volume_analysis overall_score
     watchlist_sig = sig.get("signal_score")
@@ -230,6 +253,8 @@ def _make_candidate(
         "se_score":        sig.get("se_score") if sig.get("se_score") is not None else vol.get("se_score"),
         "sector":          vol.get("sector"),
         "industry":        vol.get("industry"),
+        "volatility":      full.get("volatility"),      # trailing-60d annualized
+        "dollar_volume":   full.get("dollar_volume"),   # median 60d close×volume
     }
 
 
@@ -286,40 +311,127 @@ def _take_from_pool(
     return result
 
 
+# ── Pre-entry filters & equal-weight sizing (backtest-driven) ─────────────────
+
+def _entry_rejection(candidate: dict) -> str | None:
+    """
+    Reason a candidate fails a pre-entry gate, or None if it clears them all.
+
+    Volatility and liquidity fail *closed*: a name whose risk metrics aren't in
+    the volume cache yet (never scored, or mid-rescore — the worker mutates the
+    cache continuously) can't be confirmed safe, so it is skipped rather than
+    traded blind. The picker simply draws the next clean name from the pool, so
+    this is deterministic regardless of worker timing. An out-of-range score is
+    a bug and is always rejected.
+    """
+    agg = candidate.get("aggregate_score")
+    if agg is None or not (_SCORE_MIN <= agg <= _SCORE_MAX):
+        return f"score {agg} outside declared range [{_SCORE_MIN:.0f}, {_SCORE_MAX:.0f}]"
+
+    vol = candidate.get("volatility")
+    if vol is None:
+        return "volatility unavailable (not yet scored)"
+    if vol > _MAX_VOLATILITY:
+        return f"volatility {vol:.0%} > {_MAX_VOLATILITY:.0%} ceiling"
+
+    dv = candidate.get("dollar_volume")
+    if dv is None:
+        return "liquidity unavailable (not yet scored)"
+    if dv < _MIN_DOLLAR_VOLUME:
+        return f"liquidity ${dv:,.0f}/day < ${_MIN_DOLLAR_VOLUME:,.0f} floor"
+
+    return None
+
+
+def _appearance_counts(sessions: list[dict]) -> dict[str, int]:
+    """How many of the recent sessions each symbol appeared in."""
+    counts: dict[str, int] = {}
+    for s in sessions:
+        for sym in {(p.get("symbol") or "").upper() for p in s.get("positions", [])}:
+            if sym:
+                counts[sym] = counts.get(sym, 0) + 1
+    return counts
+
+
+def _decay_factor(appearances: int) -> float:
+    """Selection-score multiplier that fades repeat picks (see _APPEARANCE_DECAY)."""
+    return _APPEARANCE_DECAY ** max(0, appearances)
+
+
+def _allocate(picks: list[dict]) -> None:
+    """
+    Equal-weight sizing with a per-position cap (in-place).
+
+    Score-to-return correlation is ~0, so the score gates entry (in/out) and
+    every survivor is sized equally rather than by score — equal-weight beat
+    score-weighting across the backtest. Each name is then capped at
+    _MAX_POSITION_PCT of the budget as a bug guard that bounds the damage if a
+    bad score ever slips past the sanity gate.
+    """
+    n = len(picks)
+    if n == 0:
+        return
+    equal = _DAILY_BUDGET / n
+    cap   = _DAILY_BUDGET * _MAX_POSITION_PCT
+    for i, c in enumerate(picks):
+        c["allocation_usd"] = round(min(equal, cap), 4)
+        c["rank"] = i + 1
+
+
 def _compute_picks() -> list[dict]:
     """
-    Select today's picks from three independent pools:
-      Pool 1 — top _POOL_VOLUME by volume analysis overall_score
-      Pool 2 — top _POOL_SCREENER by screener score (no overlap with Pool 1)
-      Pool 3 — top _POOL_OVERALL by aggregate from remaining symbols
+    Select today's picks from three independent source pools (volume / screener /
+    aggregate), apply the backtest-driven pre-entry gates, and size equal-weight.
 
-    Pool caps (4/4/2) are hard limits, preserving the multi-source structure
-    that prevents a single noisy scanner from dominating the book.
+    Pre-entry gates, highest measured impact first:
+      1. volatility ceiling — reject trailing-60d annualized vol > _MAX_VOLATILITY
+      2. liquidity floor     — require median 60d dollar volume ≥ _MIN_DOLLAR_VOLUME
+      3. score sanity        — drop (never trade) any out-of-declared-range score
+    Repeat appearances fade a name's selection score (_APPEARANCE_DECAY — an
+    inverse signal in the backtest). Sizing is equal-weight with a
+    _MAX_POSITION_PCT cap: the score gates entry, it does not size the position.
 
-    Each pool draws _POOL_BUFFER× its cap as candidates so the dedup pass has
-    headroom to skip duplicates without coming up short on picks.
-
-    A shared constraint dict carries industry/macro-group state across pools
-    so that, e.g., a gold miner picked in Pool 1 blocks another gold miner
-    in Pool 2 or Pool 3.  _MACRO_GROUPS handle cross-GICS pairs (ANGI/TREE,
-    China ADRs) that GICS industry classification doesn't capture.
-
-    Allocation is weighted by excess score above _ALLOC_FLOOR so score
-    differences produce meaningful position-size differences.
+    Pool caps (4/4/2) and the industry/macro dedup are unchanged; the filters
+    reduce the book deliberately — a tighter, cleaner book beats a padded one.
     """
     sig_map          = _build_signal_map()
     sc_map           = _build_screener_map()
     vol_map, rec_map = _build_volume_data()
     sent_map         = _build_sentiment_map()
+    score_map        = portfolio.get_all_volume_scores()   # volatility / dollar_volume live here
 
-    # Compute screener median once — used as imputed value for candidates that
-    # have no screener score so they don't unfairly outrank candidates with a
-    # real (possibly mediocre) screener score.
-    sc_vals = list(sc_map.values())
+    appears = _appearance_counts(portfolio.get_daily_history(_APPEARANCE_LOOKBACK))
+
+    sc_vals   = list(sc_map.values())
     sc_median = float(median(sc_vals)) if sc_vals else _SCREENER_MISSING_DEFAULT
 
     def _candidate(sym: str, source: str) -> dict:
-        return _make_candidate(sym, source, sig_map, sc_map, vol_map, sent_map, rec_map, sc_median)
+        return _make_candidate(sym, source, sig_map, sc_map, vol_map, sent_map, rec_map, score_map, sc_median)
+
+    def _eligible(c: dict) -> bool:
+        reason = _entry_rejection(c)
+        if reason is None:
+            return True
+        if "declared range" in reason:
+            logger.warning("Daily-trades: DROPPED %s — %s (bug, not traded)", c["symbol"], reason)
+        else:
+            logger.debug("Daily-trades: filtered %s — %s", c["symbol"], reason)
+        return False
+
+    def _sel(base, sym: str) -> float:
+        """Ranking key: raw metric faded by repeat-appearance decay."""
+        return float(base or 0.0) * _decay_factor(appears.get(sym, 0))
+
+    def _fill(sorted_syms, source: str, buffer: int) -> list[dict]:
+        """Build candidates down the ranking, keeping the first `buffer` that pass the gates."""
+        out: list[dict] = []
+        for s in sorted_syms:
+            c = _candidate(s, source)
+            if _eligible(c):
+                out.append(c)
+                if len(out) >= buffer:
+                    break
+        return out
 
     # Shared constraint state — written by each pool, read by the next.
     counts: dict[str, int] = {}
@@ -327,61 +439,42 @@ def _compute_picks() -> list[dict]:
     # ── Pool 1: volume analysis score ────────────────────────────────────────
     vol_pool = sorted(
         [s for s in vol_map if vol_map[s].get("volume_score") is not None],
-        key=lambda s: vol_map[s]["volume_score"],
+        key=lambda s: _sel(vol_map[s]["volume_score"], s),
         reverse=True,
     )
-    vol_buffer  = [_candidate(s, "volume") for s in vol_pool[: _POOL_VOLUME * _POOL_BUFFER]]
-    chosen_vol  = _take_from_pool(vol_buffer, _POOL_VOLUME, counts)
+    chosen_vol  = _take_from_pool(_fill(vol_pool, "volume", _POOL_VOLUME * _POOL_BUFFER), _POOL_VOLUME, counts)
     chosen_syms = {c["symbol"] for c in chosen_vol}
 
     # ── Pool 2: screener score, no overlap with Pool 1 ───────────────────────
     sc_pool = sorted(
         [s for s in sc_map if s not in chosen_syms],
-        key=lambda s: sc_map[s],
+        key=lambda s: _sel(sc_map[s], s),
         reverse=True,
     )
-    sc_buffer  = [_candidate(s, "screener") for s in sc_pool[: _POOL_SCREENER * _POOL_BUFFER]]
-    chosen_sc  = _take_from_pool(sc_buffer, _POOL_SCREENER, counts)
+    chosen_sc = _take_from_pool(_fill(sc_pool, "screener", _POOL_SCREENER * _POOL_BUFFER), _POOL_SCREENER, counts)
     chosen_syms |= {c["symbol"] for c in chosen_sc}
 
     # ── Pool 3: best aggregate from remaining symbols ─────────────────────────
     all_syms = set(sc_map) | set(vol_map)
-    overall_buffer = sorted(
-        [
+    overall = [
+        c for c in (
             _candidate(s, "overall")
             for s in all_syms
             if s not in chosen_syms
             and (sc_map.get(s) is not None or vol_map.get(s, {}).get("volume_score") is not None)
-        ],
-        key=lambda c: c["aggregate_score"],
-        reverse=True,
-    )[: _POOL_OVERALL * _POOL_BUFFER]
-    chosen_overall = _take_from_pool(overall_buffer, _POOL_OVERALL, counts)
+        )
+        if _eligible(c)
+    ]
+    overall.sort(key=lambda c: _sel(c["aggregate_score"], c["symbol"]), reverse=True)
+    chosen_overall = _take_from_pool(overall[: _POOL_OVERALL * _POOL_BUFFER], _POOL_OVERALL, counts)
 
     chosen = chosen_vol + chosen_sc + chosen_overall
     if not chosen:
         return []
 
-    def _alloc(picks: list[dict]) -> None:
-        """Compute weighted allocations in-place."""
-        weights = [max(0.0, c["aggregate_score"] - _ALLOC_FLOOR) for c in picks]
-        total   = sum(weights) or float(len(picks))
-        for i, (c, w) in enumerate(zip(picks, weights)):
-            c["allocation_usd"] = round((w / total) * _DAILY_BUDGET, 4)
-            c["rank"] = i + 1
-
-    # First pass — compute allocations to identify below-minimum picks.
-    _alloc(chosen)
-
-    # Evict any pick whose allocation is below the minimum threshold.
-    # These are low-conviction names whose position size is a rounding error.
-    # Don't replace them — a tighter book beats a padded one.
-    chosen = [c for c in chosen if c["allocation_usd"] >= _MIN_ALLOCATION]
-
-    # Re-normalise allocations after eviction so the budget is fully deployed.
-    if chosen:
-        _alloc(chosen)
-
+    # Rank by aggregate for display; size equally with a per-name cap.
+    chosen.sort(key=lambda c: c["aggregate_score"], reverse=True)
+    _allocate(chosen)
     return chosen
 
 
@@ -407,6 +500,22 @@ def _sell_reason(sym: str, sig_map: dict, vol_map: dict) -> str | None:
             return f"Weak LT/sentiment composite ({composite:.0f})"
 
     return None
+
+
+def _stop_loss_flags(positions: list[dict]) -> dict[str, dict]:
+    """
+    Flag open positions down ≥ _STOP_LOSS_PCT for a hard exit, keyed by position id.
+
+    A hard stop is the price-responsive backstop for a stale score: names whose
+    score never moved while the price fell (e.g. −86%) get cut here regardless of
+    how the scorer rates them or how long they've been held.
+    """
+    flagged: dict[str, dict] = {}
+    for p in positions:
+        pnl = p.get("pnl_pct")
+        if pnl is not None and pnl <= _STOP_LOSS_PCT:
+            flagged[p["id"]] = {**p, "suggested_sell_reason": f"Stop loss ({pnl:.0f}%)"}
+    return flagged
 
 
 # ── Data-freshness warnings ───────────────────────────────────────────────────
@@ -475,21 +584,31 @@ async def get_today(force: bool = False):
         await asyncio.to_thread(portfolio.save_daily_session, today, picks)
         picks = portfolio.get_daily_positions_for_date(today)
 
-    # ── Sell review: purchased positions held _HOLD_DAYS+ days ───────────────
-    cutoff        = (datetime.now(UTC) - timedelta(days=_HOLD_DAYS)).date().isoformat()
-    old_positions = await asyncio.to_thread(portfolio.get_open_daily_positions, cutoff)
-
+    # ── Sell review: hard −20% stop on ALL open positions (any age), then the
+    #    weak long-term/sentiment review of positions held _HOLD_DAYS+ days ────
+    all_open = await asyncio.to_thread(portfolio.get_open_daily_positions)
     sell_review: list[dict] = []
-    if old_positions:
-        sig_map   = await asyncio.to_thread(_build_signal_map)
-        vol_map, _= await asyncio.to_thread(_build_volume_data)
-        price_map = await _refresh_position_prices(old_positions)
+    if all_open:
+        price_map = await _refresh_position_prices(all_open)
         if price_map:
             await asyncio.to_thread(portfolio.update_daily_position_prices, price_map)
-        for pos in old_positions:
+            all_open = await asyncio.to_thread(portfolio.get_open_daily_positions)  # refreshed pnl
+
+        # 1) Hard stop-loss takes priority and applies at any holding age.
+        flagged = _stop_loss_flags(all_open)
+
+        # 2) Weak LT/sentiment review for aged positions not already stopped out.
+        cutoff     = (datetime.now(UTC) - timedelta(days=_HOLD_DAYS)).date().isoformat()
+        sig_map    = await asyncio.to_thread(_build_signal_map)
+        vol_map, _ = await asyncio.to_thread(_build_volume_data)
+        for pos in all_open:
+            if pos["id"] in flagged or pos.get("trade_date", "") > cutoff:
+                continue
             reason = _sell_reason(pos["symbol"], sig_map, vol_map)
             if reason:
-                sell_review.append({**pos, "suggested_sell_reason": reason})
+                flagged[pos["id"]] = {**pos, "suggested_sell_reason": reason}
+
+        sell_review = list(flagged.values())
 
     # ── Refresh prices for confirmed picks ────────────────────────────────────
     confirmed = [p for p in picks if p.get("status") == "purchased"]

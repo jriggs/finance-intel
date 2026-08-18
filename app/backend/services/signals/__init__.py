@@ -49,6 +49,8 @@ from .scoring import (  # noqa: F401
     _short_term_score,
     _technical_score,
     _value_score,
+    annualized_volatility,
+    median_dollar_volume,
     score_stock,
     score_watchlist,
 )

@@ -19,6 +19,13 @@ import signals
 
 router = APIRouter()
 
+# Candidate pool size for recommendations/screeners. The Signals page's
+# pre-entry gate filter (vol/liquidity, mirrors daily_trades_router) fails
+# closed — it hides any candidate whose risk metrics haven't been scored yet,
+# not just ones that breach the thresholds — so the pool needs real headroom
+# to keep at least ~12 clean results on screen after filtering.
+_SIGNALS_POOL_SIZE = 60
+
 
 async def _screener_fallback(name: str, top_n: int) -> dict:
     """Score a sample of NYSE symbols when the screener returns no results."""
@@ -115,7 +122,7 @@ async def get_screeners_cached():
 
 
 @router.get("/api/finance/screen/{name}")
-async def run_screen(name: str, top_n: int = 15):
+async def run_screen(name: str, top_n: int = _SIGNALS_POOL_SIZE):
     try:
         cached = await asyncio.to_thread(portfolio.get_screener_result, name)
         if cached:
@@ -142,9 +149,9 @@ async def run_screen(name: str, top_n: int = 15):
 async def run_screen_now(name: str, background_tasks: BackgroundTasks):
     try:
         async def run_it():
-            result = await asyncio.to_thread(signals.run_screen, name, 15)
+            result = await asyncio.to_thread(signals.run_screen, name, _SIGNALS_POOL_SIZE)
             if not result.get("results"):
-                result.update(await _screener_fallback(name, 15))
+                result.update(await _screener_fallback(name, _SIGNALS_POOL_SIZE))
             await asyncio.to_thread(portfolio.save_screener_result, name, result)
 
         background_tasks.add_task(run_it)
@@ -163,17 +170,17 @@ async def get_recommendations_cached():
             data = cached["data"]
             if not data.get("recommendations"):
                 watchlist = portfolio.get_watchlist()
-                result = await asyncio.to_thread(signals.get_recommendations, watchlist, 12)
+                result = await asyncio.to_thread(signals.get_recommendations, watchlist, _SIGNALS_POOL_SIZE)
                 if result.get("recommendations"):
                     await asyncio.to_thread(portfolio.save_recommendations, result)
                     return {"results": result, "generated_at": datetime.now(UTC).isoformat(), "cached": False}
             return {"results": data, "generated_at": cached["generated_at"], "cached": True}
 
         watchlist = portfolio.get_watchlist()
-        result = await asyncio.to_thread(signals.get_recommendations, watchlist, 12)
+        result = await asyncio.to_thread(signals.get_recommendations, watchlist, _SIGNALS_POOL_SIZE)
 
         if not result.get("recommendations"):
-            result = await _recommendations_fallback(watchlist, 12)
+            result = await _recommendations_fallback(watchlist, _SIGNALS_POOL_SIZE)
 
         await asyncio.to_thread(portfolio.save_recommendations, result)
         return {"results": result, "generated_at": datetime.now(UTC).isoformat(), "cached": False}
@@ -186,9 +193,9 @@ async def run_recommendations_now(background_tasks: BackgroundTasks):
     try:
         async def gen_recs():
             watchlist = portfolio.get_watchlist()
-            result = await asyncio.to_thread(signals.get_recommendations, watchlist, 12)
+            result = await asyncio.to_thread(signals.get_recommendations, watchlist, _SIGNALS_POOL_SIZE)
             if not result.get("recommendations"):
-                result = await _recommendations_fallback(watchlist, 12)
+                result = await _recommendations_fallback(watchlist, _SIGNALS_POOL_SIZE)
             await asyncio.to_thread(portfolio.save_recommendations, result)
 
         background_tasks.add_task(gen_recs)

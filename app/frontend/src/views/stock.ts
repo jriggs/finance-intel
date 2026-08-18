@@ -68,7 +68,7 @@ function applyStockData(
   } else {
     $("signal-detail").innerHTML = '<div class="empty">No signal data</div>';
   }
-  if (info) renderFundamentals($("fund-detail"), info);
+  if (info) renderFundamentals($("fund-detail"), info, sig);
   else $("fund-detail").innerHTML = '<div class="empty">No data</div>';
   renderNews($("stock-news"), news?.news ?? []);
 }
@@ -140,6 +140,26 @@ export async function loadStockDetail(sym: string): Promise<void> {
   void loadExtendedInsight(sym);
 }
 
+// Pre-entry gate thresholds — mirror daily_trades_router (_MAX_VOLATILITY /
+// _MIN_DOLLAR_VOLUME) so the fundamentals grid flags names that would fail them.
+const RULE_MAX_VOL = 0.55;
+const RULE_MIN_DVOL = 5_000_000;
+
+/** 60-day annualized volatility, red-flagged if it breaches the trade ceiling. */
+function volatilityCell(v: number | null | undefined): string {
+  if (v == null) return "—";
+  const s = `${(v * 100).toFixed(0)}%`;
+  return v > RULE_MAX_VOL ? `<span class="text-red">${s} ⚠</span>` : s;
+}
+
+/** Median 60-day dollar volume, red-flagged if below the trade liquidity floor. */
+function liquidityCell(v: number | null | undefined): string {
+  if (v == null) return "—";
+  const s = `${fmtBig(v)}/day`;
+  return v < RULE_MIN_DVOL ? `<span class="text-red">${s} ⚠</span>` : s;
+}
+
+
 export function renderSignalDetail(
   el: HTMLElement,
   sig: Signal,
@@ -178,8 +198,10 @@ export function renderSignalDetail(
   `;
 }
 
-export function renderFundamentals(el: HTMLElement, info: StockInfo): void {
+export function renderFundamentals(el: HTMLElement, info: StockInfo, sig?: Signal | null): void {
   const rows: [string, string][] = [
+    ["Volatility (60d)", volatilityCell(sig?.volatility)],
+    ["Liquidity ($/day)", liquidityCell(sig?.dollar_volume)],
     ["Market Cap", fmtBig(info.market_cap)],
     ["P/E (TTM)", info.pe_ratio !== null && info.pe_ratio !== undefined ? fmt(info.pe_ratio) : "—"],
     ["Forward P/E", info.forward_pe !== null && info.forward_pe !== undefined ? fmt(info.forward_pe) : "—"],

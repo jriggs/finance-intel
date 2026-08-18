@@ -542,6 +542,53 @@ def _long_term_score(info: dict[str, Any], symbol: str | None = None, df=None) -
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
+# ── Pre-entry risk metrics (liquidity & volatility) ───────────────────────────
+
+_TRADING_DAYS = 252
+_RISK_WINDOW  = 60          # trailing sessions used for vol / dollar-volume
+
+
+def annualized_volatility(df, window: int = _RISK_WINDOW) -> float | None:
+    """
+    Annualized volatility of daily returns over the trailing `window` sessions.
+    Returns e.g. 0.55 for 55%; None when there isn't enough price history.
+    """
+    try:
+        closes = df["close"].dropna()
+    except Exception:
+        return None
+    if len(closes) < 20:
+        return None
+    rets = closes.pct_change().dropna().tail(window)
+    if len(rets) < 10:
+        return None
+    # Winsorize daily returns: a single bad tick / near-zero print (common in
+    # thin names) shouldn't let one day dominate and produce an absurd annualized
+    # figure. ±50% bounds each day's leverage while still reading genuinely wild.
+    rets = rets.clip(-0.5, 0.5)
+    return round(float(rets.std()) * (_TRADING_DAYS ** 0.5), 4)
+
+
+def median_dollar_volume(df, info: dict | None = None, window: int = _RISK_WINDOW) -> float | None:
+    """
+    Median daily dollar volume (close × volume) over the trailing `window`
+    sessions. Falls back to price × avg_volume from `info` when the OHLCV frame
+    is unavailable; None when neither source has data.
+    """
+    try:
+        if df is not None and "close" in df.columns and "volume" in df.columns:
+            dv = (df["close"] * df["volume"]).dropna().tail(window)
+            if len(dv) >= 10:
+                return round(float(dv.median()), 2)
+    except Exception:
+        pass
+    if info:
+        price, avg_vol = info.get("price"), info.get("avg_volume")
+        if price and avg_vol:
+            return round(float(price) * float(avg_vol), 2)
+    return None
+
+
 def score_stock(symbol: str, macro_snap: dict | None = None) -> dict:
     """
     Return a full signal analysis dict for one symbol.
@@ -556,6 +603,10 @@ def score_stock(symbol: str, macro_snap: dict | None = None) -> dict:
         return None
 
     df_6mo = get_price_history(symbol, period="6mo")
+
+    # Pre-entry risk metrics consumed by the daily-trade filters.
+    volatility    = annualized_volatility(df_6mo)
+    dollar_volume = median_dollar_volume(df_6mo, info)
 
     v_score, v_reasons = _value_score(info)
     t_score, t_reasons = _technical_score(info, df=df_6mo)
@@ -634,6 +685,8 @@ def score_stock(symbol: str, macro_snap: dict | None = None) -> dict:
         "debt_equity":      info.get("debt_equity"),
         "volume":           info.get("volume"),
         "avg_volume":       info.get("avg_volume"),
+        "volatility":       volatility,     # trailing-60d annualized, e.g. 0.55
+        "dollar_volume":    dollar_volume,  # median 60d close×volume
     }
 
 

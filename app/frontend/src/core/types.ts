@@ -39,6 +39,8 @@ export interface Signal {
   name?: string;
   sector?: string;
   pe_ratio?: number;
+  volatility?: number | null;      // trailing-60d annualized (0.55 = 55%)
+  dollar_volume?: number | null;   // median 60d dollar volume
   cached_at?: string;
 }
 

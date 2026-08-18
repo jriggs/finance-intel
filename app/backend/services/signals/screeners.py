@@ -380,6 +380,7 @@ def _screener_from_volume_cache(screen_name: str, cached: dict) -> dict | None:
     base = {
         "symbol": sym, "name": name, "price": price,
         "pe_ratio": pe_ratio, "analyst_target": analyst_target, "sector": sector,
+        "volatility": cached.get("volatility"), "dollar_volume": cached.get("dollar_volume"),
     }
 
     if screen_name == "undervalued":
